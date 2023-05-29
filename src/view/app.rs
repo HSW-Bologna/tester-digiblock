@@ -1,43 +1,63 @@
+use iced;
+use iced::widget::column;
+use iced::widget::{button, text};
+use iced::{Application, Command, Element};
+
 use crate::model::Model;
-use std::ops::FnOnce;
 
-pub trait AppInterface {
-    fn model(self: &Self) -> Model;
-    fn model_op<O>(self: &Self, op: O)
-    where
-        O: FnOnce(Model) -> Model;
+#[derive(Clone, Debug)]
+pub enum Message {
+    Increase,
 }
 
-pub struct App<I: AppInterface> {
-    interface: I,
+pub struct App {
+    model: Model,
 }
 
-impl<I> App<I>
-where
-    I: AppInterface,
-{
-    pub fn new(interface: I) -> Self {
-        Self { interface }
+impl Application for App {
+    type Message = Message;
+    type Theme = iced::theme::Theme;
+    type Executor = iced::executor::Default;
+    type Flags = ();
+
+    fn new(_flags: ()) -> (App, Command<Message>) {
+        (
+            App {
+                model: Model::default(),
+            },
+            Command::none(),
+        )
     }
-}
 
-impl<I> eframe::App for App<I>
-where
-    I: AppInterface,
-{
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Collaudo Arag");
+    fn title(&self) -> String {
+        String::from("Digiblock Test")
+    }
 
-            if ui.button("+").clicked() {
-                self.interface.model_op(Model::increase);
+    fn view(&self) -> Element<Message> {
+        // We use a column: a simple vertical layout
+        column![
+            // The increment button. We tell it to produce an
+            // `IncrementPressed` message when pressed
+            button("+").on_press(Message::Increase),
+            // We show the value of the counter here
+            text(self.model.count).size(50),
+            // The decrement button. We tell it to produce a
+            // `DecrementPressed` message when pressed
+            button("-").on_press(Message::Increase),
+        ]
+        .into()
+    }
+
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::Increase => {
+                self.model.count += 1;
+                Command::none()
             }
+        }
+    }
 
-            ui.label(format!("count {}", self.interface.model().count));
-
-            if ui.button("-").clicked() {
-                self.interface.model_op(Model::decrease);
-            }
-        });
+    fn theme(&self) -> iced::theme::Theme {
+        iced::theme::Theme::Dark
     }
 }
