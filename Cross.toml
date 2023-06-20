@@ -1,0 +1,15 @@
+# Copyright © SixtyFPS GmbH <info@slint-ui.com>
+# SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-commercial
+
+[target.armv7-unknown-linux-gnueabihf]
+#image = "ghcr.io/slint-ui/slint/armv7-unknown-linux-gnueabihf"
+#dockerfile = "Dockerfile"
+image = "rust-iced-rpi"
+
+[build.env]
+passthrough = [
+    "SLINT_NO_QT",
+    "SLINT_STYLE",
+    "SLINT_TEST_FILTER",
+    "SLINT_INTERPRETER_ERROR_WHITELIST",
+]
