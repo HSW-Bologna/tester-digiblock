@@ -2,13 +2,18 @@ use iced;
 use iced::{Application, Command, Element};
 use iced_native::subscription::{self, Subscription};
 use iced_native::widget::scrollable::{Id, RelativeOffset};
-use tokio::sync::mpsc;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+use tokio::time::sleep;
+use tokio_modbus::client::Context;
 use tokio_modbus::prelude::*;
 use tokio_serial::SerialStream;
 
 use super::digiblock;
-use crate::model::{DigiblockState, Model, RgbLight, State, TestState};
+use super::flashing;
+use crate::controller::reles::{self, Rele};
+use crate::controller::{adc, pwm};
+use crate::model::{DigiblockResult, DigiblockState, Model, RgbLight, TestStep};
 use crate::view;
 
 #[derive(Clone, Debug)]
@@ -16,21 +21,29 @@ pub enum ControllerMessage {
     Connect(String),
     SetLight(RgbLight),
     Disconnect,
+    Frequency(u16),
+    Pulses(u16),
+    Analog,
+    Output,
 }
 
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Ready(mpsc::Sender<ControllerMessage>),
     Log(String),
-    Connected,
-    Disconnected,
+    ConnectionFailed,
     Update(DigiblockState),
+    PulsesDone(Result<u16, ()>),
+    AnalogResult(DigiblockResult<u16>),
+    OutputResult(DigiblockResult<()>),
 }
 
 #[derive(Clone, Debug)]
 pub enum Event {
     UpdatePorts(Instant),
     UpdateLight(Instant),
+    PowerInversionCheck(bool),
+    Flashed(Option<i32>),
     ViewEvent(view::Event),
     ControllerEvent(ControllerEvent),
 }
@@ -49,10 +62,7 @@ impl Application for App {
     fn new((): Self::Flags) -> (App, Command<Event>) {
         (
             App {
-                model: Model {
-                    ports: get_ports(),
-                    ..Model::default()
-                },
+                model: Model::default(),
                 sender: None,
             },
             Command::none(),
@@ -74,24 +84,12 @@ impl Application for App {
                 self.sender = Some(sender);
                 Command::none()
             }
-            Event::ControllerEvent(ControllerEvent::Connected) => {
-                self.model.state = State::Connected(TestState::Unresponsive);
-                Command::none()
-            }
-            Event::ControllerEvent(ControllerEvent::Disconnected) => {
-                self.model.state = State::Disconnected;
-                Command::none()
-            }
             Event::ControllerEvent(ControllerEvent::Log(msg)) => {
                 self.model.logs.push(msg);
                 iced::widget::scrollable::snap_to(Id::new("logs"), RelativeOffset::END)
             }
-            Event::ControllerEvent(ControllerEvent::Update(state)) => {
-                self.model.digiblock_update(state);
-                Command::none()
-            }
             Event::UpdatePorts(_) => {
-                self.model.update_ports(get_ports());
+                //self.model.update_ports(get_ports());
                 Command::none()
             }
             Event::UpdateLight(_) => {
@@ -99,16 +97,92 @@ impl Application for App {
                 self.controller_message(ControllerMessage::SetLight(light));
                 Command::none()
             }
-            Event::ViewEvent(view::Event::Connect(port)) => {
-                self.controller_message(ControllerMessage::Connect(port));
+            Event::PowerInversionCheck(success) => {
+                if success {
+                    self.model.step = TestStep::FlashingTest(None);
+                    Command::perform(flashing::load_test_firmware(), Event::Flashed)
+                } else {
+                    self.model.step = TestStep::InvertPower(Some(String::from("Errore")));
+                    Command::none()
+                }
+            }
+            Event::Flashed(result) => {
+                match result {
+                    Some(0) => {
+                        self.model.step = TestStep::Connecting(None);
+                        self.controller_message(ControllerMessage::Connect(String::from(
+                            "/dev/ttyACM0",
+                        )))
+                    }
+                    Some(code) => {
+                        self.model.step =
+                            TestStep::FlashingTest(Some(String::from(format!("{}", code))));
+                    }
+                    None => {
+                        self.model.step = TestStep::FlashingTest(Some(String::from("Sconosciuto")));
+                    }
+                }
                 Command::none()
             }
-            Event::ViewEvent(view::Event::Disconnect) => {
-                self.controller_message(ControllerMessage::Disconnect);
+            Event::ControllerEvent(ControllerEvent::ConnectionFailed) => {
+                self.model.step = TestStep::Connecting(Some(String::from("Error")));
                 Command::none()
             }
-            Event::ViewEvent(view::Event::SelectedPort(port)) => {
-                self.model.selected_port = Some(port.clone());
+            Event::ControllerEvent(ControllerEvent::Update(state)) => {
+                self.model.digiblock_update(state);
+                Command::none()
+            }
+            Event::ControllerEvent(ControllerEvent::PulsesDone(res)) => {
+                match self.model.step {
+                    TestStep::Pulses(pulses, _) => {
+                        self.model.step = TestStep::Pulses(pulses, Some(res))
+                    }
+                    _ => (),
+                }
+                Command::none()
+            }
+            Event::ControllerEvent(ControllerEvent::AnalogResult(res)) => {
+                self.model.step = TestStep::Analog(res);
+                Command::none()
+            }
+            Event::ControllerEvent(ControllerEvent::OutputResult(res)) => {
+                self.model.step = TestStep::Output(res);
+                Command::none()
+            }
+            Event::ViewEvent(view::Event::Start) => {
+                self.model.step = TestStep::InvertPower(None);
+                Command::perform(check_power_inversion(), Event::PowerInversionCheck)
+            }
+            Event::ViewEvent(view::Event::Retry) => {
+                match self.model.step {
+                    TestStep::Connecting(_) => self.controller_message(ControllerMessage::Connect(
+                        String::from("/dev/ttyACM0"),
+                    )),
+                    _ => (),
+                };
+                Command::none()
+            }
+            Event::ViewEvent(view::Event::Next) => {
+                match self.model.step {
+                    TestStep::Ui { light } => {
+                        let _ = light;
+                        self.model.step = TestStep::Frequency(1000, false);
+                        self.controller_message(ControllerMessage::Frequency(1000));
+                    }
+                    TestStep::Frequency(_, _) => {
+                        self.model.step = TestStep::Pulses(1000, None);
+                        self.controller_message(ControllerMessage::Pulses(1000));
+                    }
+                    TestStep::Pulses(_, _) => {
+                        self.model.step = TestStep::Analog(DigiblockResult::Waiting);
+                        self.controller_message(ControllerMessage::Analog);
+                    }
+                    TestStep::Analog(_) => {
+                        self.model.step = TestStep::Output(DigiblockResult::Waiting);
+                        self.controller_message(ControllerMessage::Output);
+                    }
+                    _ => (),
+                }
                 Command::none()
             }
         }
@@ -122,8 +196,8 @@ impl Application for App {
             every(Duration::from_millis(1000)).map(Event::UpdatePorts),
         ];
 
-        match self.model.state {
-            State::Connected(TestState::Ui { light }) => {
+        match self.model.step {
+            TestStep::Ui { light } => {
                 let _ = light;
                 subscriptions.push(every(Duration::from_millis(1000)).map(Event::UpdateLight));
             }
@@ -151,7 +225,7 @@ fn controller_worker() -> Subscription<ControllerEvent> {
 
     async fn log(
         sender: &mut iced_futures::futures::channel::mpsc::Sender<ControllerEvent>,
-        msg: &str,
+        msg: impl Into<String> + std::fmt::Display,
     ) {
         use chrono::prelude::*;
 
@@ -169,7 +243,7 @@ fn controller_worker() -> Subscription<ControllerEvent> {
 
     enum State {
         Disconnected,
-        Connected(tokio_modbus::client::Context),
+        Connected(Context),
     }
 
     subscription::channel(
@@ -191,6 +265,11 @@ fn controller_worker() -> Subscription<ControllerEvent> {
                             match msg {
                                 ControllerMessage::Connect(port) => {
                                     println!("Connect to {}", port);
+
+                                    reles::update(Rele::IncorrectPower, false).ok();
+                                    reles::update(Rele::CorrectPower, true).ok();
+                                    sleep(Duration::from_millis(500)).await;
+
                                     let builder = tokio_serial::new(port, 115200);
                                     if let Ok(port) = SerialStream::open(&builder) {
                                         if let Ok(ctx) = tokio_modbus::client::rtu::connect_slave(
@@ -200,13 +279,18 @@ fn controller_worker() -> Subscription<ControllerEvent> {
                                         .await
                                         {
                                             log(&mut output, "Connection successful").await;
-                                            output.send(ControllerEvent::Connected).await.ok();
                                             state = State::Connected(ctx);
+                                            timestamp = Instant::now();
                                         } else {
                                             log(&mut output, "Connection failed").await;
+                                            output
+                                                .send(ControllerEvent::ConnectionFailed)
+                                                .await
+                                                .ok();
                                         }
                                     } else {
                                         log(&mut output, "Connection failed").await;
+                                        output.send(ControllerEvent::ConnectionFailed).await.ok();
                                     }
                                 }
                                 _ => (),
@@ -217,16 +301,54 @@ fn controller_worker() -> Subscription<ControllerEvent> {
                         if let Ok(Some(msg)) =
                             timeout(Duration::from_millis(100), receiver.recv()).await
                         {
+                            println!("Received msg {:?}", msg);
                             match msg {
                                 ControllerMessage::Disconnect => {
                                     ctx.disconnect().await.ok();
-                                    output.send(ControllerEvent::Disconnected).await.ok();
                                     state = State::Disconnected;
                                 }
                                 ControllerMessage::SetLight(light) => {
                                     digiblock::set_light(ctx, light).await.ok();
                                 }
-                                _ => (),
+                                ControllerMessage::Frequency(frequency) => {
+                                    //TODO: set error
+                                    start_frequency(ctx, frequency).await.ok();
+                                }
+                                ControllerMessage::Pulses(pulses) => {
+                                    output
+                                        .send(ControllerEvent::PulsesDone(
+                                            check_pulses(ctx, pulses).await,
+                                        ))
+                                        .await
+                                        .ok();
+                                }
+                                ControllerMessage::Analog => {
+                                    output
+                                        .send(ControllerEvent::AnalogResult(
+                                            match check_analog(ctx).await {
+                                                Ok(None) => DigiblockResult::Ok,
+                                                Ok(Some((expected, found))) => {
+                                                    DigiblockResult::InvalidValue(expected, found)
+                                                }
+                                                Err(()) => DigiblockResult::CommunicationError,
+                                            },
+                                        ))
+                                        .await
+                                        .ok();
+                                }
+                                ControllerMessage::Output => {
+                                    output
+                                        .send(ControllerEvent::OutputResult(
+                                            match check_output(ctx).await {
+                                                Ok(true) => DigiblockResult::Ok,
+                                                Ok(false) => DigiblockResult::InvalidValue((), ()),
+                                                Err(()) => DigiblockResult::CommunicationError,
+                                            },
+                                        ))
+                                        .await
+                                        .ok();
+                                }
+                                ControllerMessage::Connect(_) => (),
                             }
                         } else {
                             let now = Instant::now();
@@ -241,7 +363,7 @@ fn controller_worker() -> Subscription<ControllerEvent> {
                                     output.send(ControllerEvent::Update(rsp)).await.ok();
                                 } else {
                                     log(&mut output, "Errore di comunicazione").await;
-                                    output.send(ControllerEvent::Disconnected).await.ok();
+                                    output.send(ControllerEvent::ConnectionFailed).await.ok();
                                     state = State::Disconnected;
                                 }
                             }
@@ -253,10 +375,74 @@ fn controller_worker() -> Subscription<ControllerEvent> {
     )
 }
 
-fn get_ports() -> Vec<String> {
+fn _get_ports() -> Vec<String> {
     serialport::available_ports()
         .unwrap_or(Vec::new())
         .iter()
         .map(|p| p.port_name.clone())
         .collect()
+}
+
+async fn check_power_inversion() -> bool {
+    sleep(Duration::from_millis(500)).await;
+
+    //TODO: read adc channel
+    true
+}
+
+async fn check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
+    reles::update(Rele::AnalogMode, false).map_err(|_| ())?;
+    reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
+
+    digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
+    digiblock::reset_pulses(ctx).await.map_err(|_| ())?;
+    pwm::toggle_times(pulses).await.map_err(|_| ())?;
+
+    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    Ok(rsp.pulses)
+}
+
+async fn check_analog(ctx: &mut Context) -> Result<Option<(u16, u16)>, ()> {
+    reles::update(Rele::DigitalMode, false).map_err(|_| ())?;
+    reles::update(Rele::AnalogMode, true).map_err(|_| ())?;
+
+    digiblock::set_analog_mode(ctx).await.map_err(|_| ())?;
+
+    pwm::set_420ma(2).map_err(|_| ())?;
+    sleep(Duration::from_millis(500)).await;
+
+    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    println!("{:?}", rsp);
+
+    Ok(None)
+}
+
+async fn check_output(ctx: &mut Context) -> Result<bool, ()> {
+    digiblock::set_output(ctx, false).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(100)).await;
+    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
+    println!("adc {}", value);
+
+    digiblock::set_output(ctx, true).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(100)).await;
+    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
+    println!("adc {}", value);
+
+    Ok(true)
+}
+
+async fn start_frequency(ctx: &mut Context, frequency: u16) -> Result<(), ()> {
+    reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
+    digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
+    pwm::set_frequency(frequency).map_err(|_| ())?;
+
+    Ok(())
 }

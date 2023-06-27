@@ -1,20 +1,49 @@
+use std::{error::Error, time::Duration};
 
-use std::error::Error;
-use std::thread;
-use std::time::Duration;
+use rppal::{
+    gpio::Gpio,
+    pwm::{Channel, Polarity, Pwm},
+};
 
-use rppal::pwm::{Channel, Polarity, Pwm};
-
-pub fn set_pwm() -> Result<(), Box<dyn Error>> {
+pub fn set_420ma(_milliamperes: u16) -> Result<(), Box<dyn Error>> {
     // Enable PWM channel 0 (BCM GPIO 18, physical pin 12) at 2 Hz with a 25% duty cycle.
     let mut pwm = Pwm::with_frequency(Channel::Pwm1, 1000.0, 0.25, Polarity::Normal, true)?;
     pwm.set_reset_on_drop(false);
 
-    println!("Running pwm1 at 25%");
-    thread::sleep(Duration::from_secs(10));
+    Ok(())
+}
+
+pub fn set_frequency(frequency: u16) -> Result<(), ()> {
+    // Enable PWM channel 0 (BCM GPIO 18, physical pin 12) at 2 Hz with a 25% duty cycle.
+    let mut pwm = Pwm::with_frequency(Channel::Pwm0, frequency as f64, 0.5, Polarity::Normal, true)
+        .map_err(|_| ())?;
+    pwm.set_reset_on_drop(false);
 
     Ok(())
+}
 
-    // When the pwm variable goes out of scope, the PWM channel is automatically disabled.
-    // You can manually disable the channel by calling the Pwm::disable() method.
+pub async fn toggle_times(times: u16) -> Result<(), Box<dyn Error>> {
+    for _ in 0..times {
+        set_pulse_level(false)?;
+        tokio::time::sleep(Duration::from_micros(500)).await;
+        set_pulse_level(true)?;
+        tokio::time::sleep(Duration::from_micros(500)).await;
+    }
+
+    set_pulse_level(false)?;
+
+    Ok(())
+}
+
+fn set_pulse_level(value: bool) -> Result<(), Box<dyn Error>> {
+    let mut pin = Gpio::new()?.get(12)?.into_output();
+    pin.set_reset_on_drop(false);
+
+    if value {
+        pin.set_high();
+    } else {
+        pin.set_low();
+    }
+
+    Ok(())
 }

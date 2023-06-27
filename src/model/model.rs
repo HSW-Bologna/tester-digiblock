@@ -7,49 +7,47 @@ pub enum RgbLight {
     Blue,
 }
 
+#[derive(Debug, Clone)]
+pub enum DigiblockResult<T> {
+    Waiting,
+    Ok,
+    InvalidValue(T, T),
+    CommunicationError,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DigiblockState {
     pub left_button: bool,
     pub right_button: bool,
+    pub frequency: u16,
+    pub pulses: u16,
+    pub ma420: u16,
 }
 
-#[derive(Clone, Copy, Default)]
-pub enum TestState {
+#[derive(Clone, Default)]
+pub enum TestStep {
     #[default]
-    Unresponsive,
+    Stopped,
+    InvertPower(Option<String>),
+    FlashingTest(Option<String>),
+    Connecting(Option<String>),
     Ui {
         light: RgbLight,
     },
-}
-
-#[derive(Clone, Copy, Default)]
-pub enum State {
-    #[default]
-    Disconnected,
-    Connected(TestState),
+    Frequency(u32, bool),
+    Pulses(u32, Option<Result<u16, ()>>),
+    Analog(DigiblockResult<u16>),
+    Output(DigiblockResult<()>),
 }
 
 #[derive(Clone, Default)]
 pub struct Model {
-    pub state: State,
+    pub step: TestStep,
     pub digiblock_state: DigiblockState,
-    pub ports: Vec<String>,
-    pub selected_port: Option<String>,
     pub logs: Vec<String>,
 }
 
 impl Model {
-    pub fn update_ports(&mut self, ports: Vec<String>) {
-        self.ports = ports;
-        if let Some(port) = &self.selected_port {
-            if !self.ports.contains(&port) {
-                self.selected_port = None;
-            }
-        } else if self.ports.len() > 0 {
-            self.selected_port = Some(self.ports[0].clone());
-        }
-    }
-
     pub fn logs(&self) -> String {
         let mut logs = String::new();
 
@@ -60,19 +58,12 @@ impl Model {
         logs
     }
 
-    pub fn connected(&self) -> bool {
-        match self.state {
-            State::Connected(_) => true,
-            State::Disconnected => false,
-        }
-    }
-
     pub fn digiblock_update(&mut self, state: DigiblockState) {
-        match self.state {
-            State::Connected(TestState::Unresponsive) => {
-                self.state = State::Connected(TestState::Ui {
+        match self.step {
+            TestStep::Connecting(_) => {
+                self.step = TestStep::Ui {
                     light: RgbLight::default(),
-                })
+                }
             }
             _ => (),
         }
@@ -80,15 +71,15 @@ impl Model {
     }
 
     pub fn next_light(&mut self) -> RgbLight {
-        match self.state {
-            State::Connected(TestState::Ui { light }) => {
+        match self.step {
+            TestStep::Ui { light } => {
                 let next = match light {
                     RgbLight::White => RgbLight::Red,
                     RgbLight::Red => RgbLight::Green,
                     RgbLight::Green => RgbLight::Blue,
                     RgbLight::Blue => RgbLight::White,
                 };
-                self.state = State::Connected(TestState::Ui { light: next });
+                self.step = TestStep::Ui { light: next };
                 light
             }
             _ => RgbLight::White,

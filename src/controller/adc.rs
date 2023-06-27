@@ -2,7 +2,6 @@
 
 use std::error::Error;
 
-use mcp3208::{Channel, Mcp3208};
 use rppal::spi::{Bus, Mode, SlaveSelect, Spi};
 
 /// Number of bits to be sent/received within a single transaction
@@ -26,7 +25,34 @@ const CHANNEL_BIT_COUNT: u8 = 3;
 /// index of the first bit of the channel selection field
 const CHANNEL_BITS_INDEX: u8 = MODE_BIT_INDEX - CHANNEL_BIT_COUNT; // 27
 
-pub fn read_adc() -> Result<(), Box<dyn Error>> {
+#[derive(Debug, Copy, Clone)]
+pub enum Channel {
+    VBat,
+    PowerConsumption,
+    Out1,
+    VRef,
+    Press,
+    Volt5,
+    Supply,
+    Volt3,
+}
+
+impl Into<u8> for Channel {
+    fn into(self) -> u8 {
+        match self {
+            Channel::VBat => 0,
+            Channel::PowerConsumption => 1,
+            Channel::Out1 => 2,
+            Channel::VRef => 3,
+            Channel::Press => 4,
+            Channel::Volt5 => 5,
+            Channel::Supply => 6,
+            Channel::Volt3 => 7,
+        }
+    }
+}
+
+pub fn read_adc(channel: Channel) -> Result<u16, Box<dyn Error>> {
     // outputs the raw adc values of all channels
     /*if let Ok(mut mcp3208) = Mcp3208::new("/dev/spidev0.0") {
         Channel::VALUES.iter().for_each(|&channel| {
@@ -65,9 +91,13 @@ pub fn read_adc() -> Result<(), Box<dyn Error>> {
 
     let mut buffer = [0u8; 4];
 
-    spi.transfer(&mut buffer, &create_write_buffer(0))?;
+    spi.transfer(&mut buffer, &create_write_buffer(channel.into()))?;
 
-    println!("Bytes read: {:?}", buffer);
+    let result: u16 = (((buffer[0] as u16) & 0x1) << 13)
+        | ((buffer[1] as u16) << 4)
+        | (((buffer[2] as u16) & 0xF0) >> 4);
 
-    Ok(())
+    println!("Bytes read from {:?}: {:?} - {}", channel, buffer, result);
+
+    Ok(result)
 }

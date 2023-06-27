@@ -7,15 +7,15 @@ use iced_native::widget::scrollable::Id;
 
 pub mod style;
 
-use crate::model::{Model, RgbLight, State, TestState};
+use crate::model::{DigiblockResult, Model, RgbLight, TestStep};
 
 //TODO: move away
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    Connect(String),
-    Disconnect,
-    SelectedPort(String),
+    Start,
+    Retry,
+    Next,
 }
 
 pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
@@ -24,17 +24,32 @@ pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
         .size(32)
         .horizontal_alignment(alignment::Horizontal::Center);
 
-    let ports_picker = pick_list(
-        model.ports.clone(),
-        model.selected_port.clone(),
-        Event::SelectedPort,
-    )
-    .placeholder("Selezionare porta");
+    let state_view: Element<Event> = match &model.step {
+        TestStep::Stopped => column![
+            text("Pronto al collaudo"),
+            button("Inizia").on_press(Event::Start)
+        ]
+        .into(),
+        TestStep::InvertPower(Some(error)) => text(format!(
+            "Controllo inversione alimentazione fallito: {}",
+            error
+        ))
+        .into(),
+        TestStep::InvertPower(_) => text("Controllo inversione alimentazione").into(),
 
-    let state_view: Element<Event> = match model.state {
-        State::Disconnected => text("Non connesso").into(),
-        State::Connected(TestState::Unresponsive) => text("La scheda non risponde").into(),
-        State::Connected(TestState::Ui { light }) => {
+        TestStep::FlashingTest(Some(error)) => {
+            text(format!("Caricamento firmware fallito: {}", error)).into()
+        }
+        TestStep::FlashingTest(_) => text("Caricamento firmware collaudo...").into(),
+
+        TestStep::Connecting(Some(error)) => column![
+            text(format!("Connessione fallita: {}", error)),
+            button("Riprova").on_press(Event::Retry),
+        ]
+        .into(),
+        TestStep::Connecting(_) => text("Connessione...").into(),
+
+        TestStep::Ui { light } => {
             let buttons_text = text(
                 if model.digiblock_state.left_button && model.digiblock_state.right_button {
                     "Pulsanti funzionanti"
@@ -54,21 +69,75 @@ pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
                 RgbLight::Blue => "Blu",
             });
 
-            column![buttons_text, light_text].into()
+            column![
+                buttons_text,
+                light_text,
+                button("Avanti").on_press(Event::Next),
+            ]
+            .into()
         }
-    };
 
-    let connect_button = if model.connected() {
-        button(text("Disconnetti")).on_press(Event::Disconnect)
-    } else if let Some(port) = &model.selected_port {
-        button(text("Connetti")).on_press(Event::Connect(port.clone()))
-    } else {
-        button(text("Connetti"))
+        TestStep::Frequency(frequency, _error) => column![
+            text(format!("Frequenza impostata: {}", frequency)),
+            text(format!(
+                "Frequenza letta    : {}",
+                model.digiblock_state.frequency
+            )),
+            button("Avanti").on_press(Event::Next),
+        ]
+        .into(),
+        TestStep::Pulses(pulses, None) => column![
+            text(format!("Invio impulsi: {}", pulses)),
+            text("In corso..."),
+            button("Avanti").on_press(Event::Next),
+        ]
+        .into(),
+        TestStep::Pulses(pulses, Some(Ok(received))) => column![
+            text(format!("Invio impulsi: {}", pulses)),
+            text(format!("Ricevuti: {}", received)),
+            button("Avanti").on_press(Event::Next),
+        ]
+        .into(),
+        TestStep::Pulses(pulses, Some(Err(()))) => column![
+            text(format!("Invio impulsi: {}", pulses)),
+            text("Errore!"),
+            button("Avanti").on_press(Event::Next),
+        ]
+        .into(),
+
+        TestStep::Analog(DigiblockResult::Waiting) => {
+            column![text("Test analogico in corso")].into()
+        }
+        TestStep::Analog(DigiblockResult::CommunicationError) => {
+            column![text("Errore di comunicazione durante il test analogico")].into()
+        }
+        TestStep::Analog(DigiblockResult::InvalidValue(expected, found)) => column![
+            text(format!("420 ma: {}", expected)),
+            text(format!("Valore non valido: {}", found)),
+        ]
+        .into(),
+        TestStep::Analog(DigiblockResult::Ok) => column![
+            text("Test analogico concluso"),
+            button("Avanti").on_press(Event::Next),
+        ]
+        .into(),
+
+        TestStep::Output(DigiblockResult::Waiting) => text("Test uscita in corso").into(),
+        TestStep::Output(DigiblockResult::CommunicationError) => {
+            text("Errore di comunicazione durante il test uscita").into()
+        }
+        TestStep::Output(DigiblockResult::InvalidValue((), ())) => {
+            text("Test uscita fallito!").into()
+        }
+        TestStep::Output(DigiblockResult::Ok) => column![
+            text("Test uscita concluso"),
+            button("Avanti").on_press(Event::Next)
+        ]
+        .into(),
     };
 
     column![
         title,
-        row![ports_picker, connect_button,],
         scrollable(
             container(state_view)
                 .width(Length::Fill)
