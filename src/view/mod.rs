@@ -7,7 +7,7 @@ use iced_native::widget::scrollable::Id;
 
 pub mod style;
 
-use crate::model::{DigiblockResult, Model, RgbLight, TestStep};
+use crate::model::{Model, RgbLight, StepState, TestState, TestStep};
 
 //TODO: move away
 
@@ -15,7 +15,12 @@ use crate::model::{DigiblockResult, Model, RgbLight, TestStep};
 pub enum Event {
     Start,
     Retry,
-    Next,
+    Done,
+    SaveConfig,
+    Config,
+    UpdateDUT(String),
+    UpdateOrder(String),
+    UpdateOperator(String),
 }
 
 pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
@@ -24,32 +29,48 @@ pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
         .size(32)
         .horizontal_alignment(alignment::Horizontal::Center);
 
-    let state_view: Element<Event> = match &model.step {
-        TestStep::Stopped => column![
+    let next_button = button("Avanti").on_press(Event::Done);
+    let retry_button = button("Riprova").on_press(Event::Retry);
+    let config_button = button("Configura").on_press(Event::Config);
+
+    let state_view: Element<Event> = match &model.state {
+        TestState::Unconfigured => column![
+            text_input("Codice DUT", model.config.codice_dut.as_str()).on_input(Event::UpdateDUT),
+            text_input("Ordine", model.config.ordine_forn.as_str()).on_input(Event::UpdateOrder),
+            text_input("Operatore", model.config.operatore.as_str()).on_input(Event::UpdateOperator),
+            button("Salva").on_press(Event::SaveConfig),
+        ]
+        .into(),
+        TestState::Ready => column![
             text("Pronto al collaudo"),
-            button("Inizia").on_press(Event::Start)
+            row![config_button, button("Inizia").on_press(Event::Start)]
         ]
         .into(),
-        TestStep::InvertPower(Some(error)) => text(format!(
-            "Controllo inversione alimentazione fallito: {}",
-            error
-        ))
-        .into(),
-        TestStep::InvertPower(_) => text("Controllo inversione alimentazione").into(),
 
-        TestStep::FlashingTest(Some(error)) => {
-            text(format!("Caricamento firmware fallito: {}", error)).into()
+        TestState::Testing(TestStep::InvertPower, StepState::Waiting) => {
+            text("Controllo inversione alimentazione in corso").into()
         }
-        TestStep::FlashingTest(_) => text("Caricamento firmware collaudo...").into(),
-
-        TestStep::Connecting(Some(error)) => column![
-            text(format!("Connessione fallita: {}", error)),
-            button("Riprova").on_press(Event::Retry),
+        TestState::Testing(TestStep::InvertPower, StepState::Failed) => column![
+            text("Controllo inversione alimentazione fallito"),
+            retry_button
         ]
         .into(),
-        TestStep::Connecting(_) => text("Connessione...").into(),
 
-        TestStep::Ui { light } => {
+        TestState::Testing(TestStep::FlashingTest, StepState::Waiting) => {
+            text("Caricamento firmware collaudo...").into()
+        }
+        TestState::Testing(TestStep::FlashingTest, StepState::Failed) => {
+            column![text(format!("Caricamento firmware fallito")), retry_button,].into()
+        }
+
+        TestState::Testing(TestStep::Connecting, StepState::Waiting) => {
+            text("Connessione...").into()
+        }
+        TestState::Testing(TestStep::Connecting, StepState::Failed) => {
+            column![text("Connessione fallita"), retry_button, next_button].into()
+        }
+
+        TestState::Testing(TestStep::Ui, _) => {
             let buttons_text = text(
                 if model.digiblock_state.left_button && model.digiblock_state.right_button {
                     "Pulsanti funzionanti"
@@ -62,78 +83,44 @@ pub fn view<'a>(model: &'a Model) -> Element<'a, Event> {
                 },
             );
 
-            let light_text = text(match light {
+            let light_text = text(match model.light {
                 RgbLight::White => "bianca",
                 RgbLight::Red => "rossa",
                 RgbLight::Green => "Verde",
                 RgbLight::Blue => "Blu",
             });
 
-            column![
-                buttons_text,
-                light_text,
-                button("Avanti").on_press(Event::Next),
-            ]
-            .into()
+            column![buttons_text, light_text, next_button,].into()
         }
 
-        TestStep::Frequency(frequency, _error) => column![
-            text(format!("Frequenza impostata: {}", frequency)),
-            text(format!(
-                "Frequenza letta    : {}",
-                model.digiblock_state.frequency
-            )),
-            button("Avanti").on_press(Event::Next),
-        ]
-        .into(),
-        TestStep::Pulses(pulses, None) => column![
-            text(format!("Invio impulsi: {}", pulses)),
-            text("In corso..."),
-            button("Avanti").on_press(Event::Next),
-        ]
-        .into(),
-        TestStep::Pulses(pulses, Some(Ok(received))) => column![
-            text(format!("Invio impulsi: {}", pulses)),
-            text(format!("Ricevuti: {}", received)),
-            button("Avanti").on_press(Event::Next),
-        ]
-        .into(),
-        TestStep::Pulses(pulses, Some(Err(()))) => column![
-            text(format!("Invio impulsi: {}", pulses)),
-            text("Errore!"),
-            button("Avanti").on_press(Event::Next),
-        ]
-        .into(),
+        TestState::Testing(TestStep::Frequency, StepState::Waiting) => {
+            text("Test frequenza in corso").into()
+        }
+        TestState::Testing(TestStep::Frequency, StepState::Failed) => {
+            column![text("Test frequenza fallito"), retry_button, next_button,].into()
+        }
 
-        TestStep::Analog(DigiblockResult::Waiting) => {
-            column![text("Test analogico in corso")].into()
+        TestState::Testing(TestStep::Pulses, StepState::Waiting) => {
+            text("Invio impulsi in corso").into()
         }
-        TestStep::Analog(DigiblockResult::CommunicationError) => {
-            column![text("Errore di comunicazione durante il test analogico")].into()
+        TestState::Testing(TestStep::Pulses, StepState::Failed) => {
+            column![text("Test impulsi fallito"), retry_button, next_button,].into()
         }
-        TestStep::Analog(DigiblockResult::InvalidValue(expected, found)) => column![
-            text(format!("420 ma: {}", expected)),
-            text(format!("Valore non valido: {}", found)),
-        ]
-        .into(),
-        TestStep::Analog(DigiblockResult::Ok) => column![
-            text("Test analogico concluso"),
-            button("Avanti").on_press(Event::Next),
-        ]
-        .into(),
 
-        TestStep::Output(DigiblockResult::Waiting) => text("Test uscita in corso").into(),
-        TestStep::Output(DigiblockResult::CommunicationError) => {
-            text("Errore di comunicazione durante il test uscita").into()
+        TestState::Testing(TestStep::Analog, StepState::Waiting) => {
+            text("Test analogico in corso").into()
         }
-        TestStep::Output(DigiblockResult::InvalidValue((), ())) => {
-            text("Test uscita fallito!").into()
+        TestState::Testing(TestStep::Analog, StepState::Failed) => {
+            column![text("Test analogico fallito"), retry_button, next_button,].into()
         }
-        TestStep::Output(DigiblockResult::Ok) => column![
-            text("Test uscita concluso"),
-            button("Avanti").on_press(Event::Next)
-        ]
-        .into(),
+
+        TestState::Testing(TestStep::Output, StepState::Waiting) => {
+            text("Test uscita in corso").into()
+        }
+        TestState::Testing(TestStep::Output, StepState::Failed) => {
+            column![text("Test uscita fallito"), retry_button, next_button,].into()
+        }
+        TestState::Done => column![text("Test concluso"), next_button,].into(),
     };
 
     column![

@@ -1,3 +1,7 @@
+use serde::{Serialize, Deserialize};
+
+use super::{Report, TestStepResult};
+
 #[derive(Clone, Copy, Default, Debug)]
 pub enum RgbLight {
     #[default]
@@ -7,12 +11,11 @@ pub enum RgbLight {
     Blue,
 }
 
-#[derive(Debug, Clone)]
-pub enum DigiblockResult<T> {
+#[derive(Clone, Default)]
+pub enum StepState {
+    #[default]
     Waiting,
-    Ok,
-    InvalidValue(T, T),
-    CommunicationError,
+    Failed,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -24,27 +27,42 @@ pub struct DigiblockState {
     pub ma420: u16,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug)]
 pub enum TestStep {
+    InvertPower,
+    FlashingTest,
+    Connecting,
+    Ui,
+    Frequency,
+    Pulses,
+    Analog,
+    Output,
+}
+
+#[derive(Clone, Default)]
+pub enum TestState {
     #[default]
-    Stopped,
-    InvertPower(Option<String>),
-    FlashingTest(Option<String>),
-    Connecting(Option<String>),
-    Ui {
-        light: RgbLight,
-    },
-    Frequency(u32, bool),
-    Pulses(u32, Option<Result<u16, ()>>),
-    Analog(DigiblockResult<u16>),
-    Output(DigiblockResult<()>),
+    Unconfigured,
+    Ready,
+    Testing(TestStep, StepState),
+    Done,
 }
 
 #[derive(Clone, Default)]
 pub struct Model {
-    pub step: TestStep,
+    pub state: TestState,
     pub digiblock_state: DigiblockState,
     pub logs: Vec<String>,
+    pub light: RgbLight,
+    pub report: Report,
+    pub config: Configuration,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct Configuration {
+    pub codice_dut: String,
+    pub ordine_forn: String,
+    pub operatore: String,
 }
 
 impl Model {
@@ -59,11 +77,10 @@ impl Model {
     }
 
     pub fn digiblock_update(&mut self, state: DigiblockState) {
-        match self.step {
-            TestStep::Connecting(_) => {
-                self.step = TestStep::Ui {
-                    light: RgbLight::default(),
-                }
+        match self.state {
+            TestState::Testing(TestStep::Connecting, _) => {
+                self.state = TestState::Testing(TestStep::Ui, StepState::Waiting);
+                self.light = RgbLight::default();
             }
             _ => (),
         }
@@ -71,18 +88,28 @@ impl Model {
     }
 
     pub fn next_light(&mut self) -> RgbLight {
-        match self.step {
-            TestStep::Ui { light } => {
-                let next = match light {
-                    RgbLight::White => RgbLight::Red,
-                    RgbLight::Red => RgbLight::Green,
-                    RgbLight::Green => RgbLight::Blue,
-                    RgbLight::Blue => RgbLight::White,
-                };
-                self.step = TestStep::Ui { light: next };
-                light
-            }
-            _ => RgbLight::White,
+        self.light = match self.light {
+            RgbLight::White => RgbLight::Red,
+            RgbLight::Red => RgbLight::Green,
+            RgbLight::Green => RgbLight::Blue,
+            RgbLight::Blue => RgbLight::White,
+        };
+        self.light
+    }
+}
+
+impl TestStep {
+    pub fn into_result(self: &Self, result: bool) -> TestStepResult {
+        use TestStep::*;
+        match self {
+            InvertPower => TestStepResult::description("A001", result),
+            FlashingTest => TestStepResult::description("A002", result),
+            Connecting => TestStepResult::description("A003", result),
+            Ui => TestStepResult::description("A004", result),
+            Frequency => TestStepResult::description("A005", result),
+            Pulses => TestStepResult::description("A006", result),
+            Analog => TestStepResult::description("A007", result),
+            Output => TestStepResult::description("A008", result),
         }
     }
 }

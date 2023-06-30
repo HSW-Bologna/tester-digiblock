@@ -18,7 +18,10 @@ cross build --release --target=${TARGET_ARCH}
 tar -czf ${TAR_PATH} ${SOURCE_PATH}
 
 #sshpass -p ${PASSWORD} ssh ${TARGET_HOST} killall ./digiblock_tester 
+#scp ${TAR_PATH} ${TARGET_HOST}:${TAR_PATH}
+#ssh ${TARGET_HOST} tar -xzf ${TAR_PATH}
 sshpass -p ${PASSWORD} scp ${TAR_PATH} ${TARGET_HOST}:${TAR_PATH}
 sshpass -p ${PASSWORD} ssh ${TARGET_HOST} tar -xzf ${TAR_PATH}
+
 #rsync ${SOURCE_PATH} ${TARGET_HOST}:${TARGET_PATH}
 #ssh -t ${TARGET_HOST} ${TARGET_PATH}

@@ -78,7 +78,7 @@ pub fn read_adc(channel: Channel) -> Result<u16, Box<dyn Error>> {
         //   x: checksum bit (lsb first)
 
         let start_bits = 1u32 << START_BIT_INDEX;
-        let mode_bits = 0u32 << MODE_BIT_INDEX;
+        let mode_bits = 1u32 << MODE_BIT_INDEX;
         let channel_selection_bits = (channel as u32) << CHANNEL_BITS_INDEX;
         (start_bits | mode_bits | channel_selection_bits).to_be_bytes()
         //[0xC0 | ((channel & 0x7) << 3), 0, 0]
@@ -93,9 +93,9 @@ pub fn read_adc(channel: Channel) -> Result<u16, Box<dyn Error>> {
 
     spi.transfer(&mut buffer, &create_write_buffer(channel.into()))?;
 
-    let result: u16 = (((buffer[0] as u16) & 0x1) << 13)
-        | ((buffer[1] as u16) << 4)
-        | (((buffer[2] as u16) & 0xF0) >> 4);
+    let result: u16 = (((buffer[0] as u16) & 0x1) << 11)
+        | ((buffer[1] as u16) << 3)
+        | (((buffer[2] as u16) & 0xE0) >> 5);
 
     println!("Bytes read from {:?}: {:?} - {}", channel, buffer, result);
 

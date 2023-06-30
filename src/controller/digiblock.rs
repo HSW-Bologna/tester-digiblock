@@ -13,7 +13,7 @@ const HOLDING_REGISTER_MODE: u16 = 0;
 const HOLDING_REGISTER_RESET_PULSES: u16 = 1;
 const HOLDING_REGISTER_OUTPUT: u16 = 2;
 const HOLDING_REGISTER_BACKLIGHT: u16 = 3;
-const HOLDING_REGISTER_RGB: u16 = 4;
+//const HOLDING_REGISTER_RGB: u16 = 4;
 
 const DIGITAL_MODE: u16 = 1;
 const ANALOG_MODE: u16 = 2;
@@ -79,6 +79,7 @@ pub async fn reset_pulses(ctx: &mut Context) -> Result<(), ()> {
 }
 
 pub async fn set_output(ctx: &mut Context, value: bool) -> Result<(), ()> {
+    println!("Setting output to {}", value);
     ctx.write_multiple_registers(HOLDING_REGISTER_OUTPUT, &[if value { 1 } else { 0 }])
         .await
         .map_err(|_| ())
