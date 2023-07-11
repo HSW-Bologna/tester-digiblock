@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 tokio-modbus = "*"
 tokio-serial = "*"
-iced = {version="0.9.0", features=["tokio"]}
+iced = {version="0.9.0", features=["tokio", "glow"]}
 iced_native = "*"
 iced_futures = "*"
 tokio = {version="1.0.0", features = ["full"] }

@@ -6,6 +6,10 @@
 #dockerfile = "Dockerfile"
 image = "rust-iced-rpi"
 
+[target.aarch64-unknown-linux-gnu]
+#dockerfile = "Dockerfile"
+image = "rust-iced-rpi2"
+
 [build.env]
 passthrough = [
     "SLINT_NO_QT",

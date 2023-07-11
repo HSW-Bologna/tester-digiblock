@@ -1,4 +1,4 @@
-use crate::model::{ SerializableReport, Model};
+use crate::model::{Model, SerializableReport};
 use chrono::{Datelike, Timelike, Utc};
 use serde_yaml;
 use std::fs::{create_dir_all, File};
@@ -31,34 +31,80 @@ pub fn save_report(model: &Model) {
 
     let mut file = File::create(filename).unwrap();
 
-    let content =
-        serde_yaml::to_string::<SerializableReport>(&model.report.serializable(&model.config))
-            .unwrap();
+    let report = model.report.serializable(&model.config);
+    //let content = serde_yaml::to_string::<SerializableReport>(&report).unwrap();
 
-    /*let mut content: String = format!(
-            r#"formato: {}
-    collaudo:
-        attrezzatura: "{}"
-        istanza: {}
-    prove:"#,
-            report.formato, report.collaudo.attrezzatura, report.collaudo.istanza,
-        );
+    let mut content: String = format!(
+        r#"formato: {}
+collaudo:
+  attrezzatura: '{}'
+  istanza: {}
+  stazione: {}
+  applicazione: '{}'
+  versione: '{}'
+  codice_dut: '{}'
+  firmware: '{}'
+  matricola: 'TODO'
+  data: '{}'
+  ora: '{}'
+  durata: {}
+  operatore: '{}'
+  esito: '{}'
+  codice_di_errore: '{}'
+  note: '{}'
+prove:
+"#,
+        report.formato,
+        report.collaudo.attrezzatura,
+        report.collaudo.istanza,
+        report.collaudo.attrezzatura,
+        report.collaudo.applicazione,
+        report.collaudo.versione,
+        report.collaudo.codice_dut,
+        report.collaudo.firmware,
+        report.collaudo.data,
+        report.collaudo.ora,
+        report.collaudo.durata,
+        report.collaudo.operatore,
+        report.collaudo.esito,
+        report.collaudo.codice_di_errore,
+        report.collaudo.note,
+    );
 
-        let mut prove = Vec::from_iter(report.prove.clone());
-        prove.sort_by_key(|(k, _)| k.clone());
+    for p in report.prove {
+        content += format!(
+            r#"- prova: '{}'
+  descrizione: '{}'
+  esito: '{}'
+  durata: {}
+  udm: '{}'
+  valore: {}
+  minimo: {}
+  massimo: {}
+"#,
+            p.prova,
+            p.descrizione,
+            p.esito,
+            p.durata,
+            p.udm,
+            yaml_nullable(p.valore),
+            yaml_nullable(p.minimo),
+            yaml_nullable(p.massimo),
+        )
+        .as_str();
+    }
 
-        for el in prove {
-            let (_, p) = el;
-            content += format!(
-                r#"
-      - prova: "{}"
-        esito: "{}"
-    "#,
-                p.prova,
-                if p.esito { "Pass" } else { "Fail" }
-            )
-            .as_str();
-        }*/
+    file.write_all(content.replace("\n", "\r\n").as_bytes())
+        .ok();
+}
 
-    file.write_all(content.as_bytes()).ok();
+fn yaml_nullable<T>(value: Option<T>) -> String
+where
+    T: core::fmt::Display,
+{
+    if let Some(value) = value {
+        format!("{}", value)
+    } else {
+        String::from("null")
+    }
 }

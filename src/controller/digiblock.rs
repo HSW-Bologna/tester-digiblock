@@ -28,9 +28,11 @@ impl TryFrom<Vec<u16>> for DigiblockState {
             Ok(DigiblockState {
                 left_button: (value[0] & 0x01) > 0,
                 right_button: (value[0] & 0x02) > 0,
-                frequency: value[1],
+                period_us: value[1],
                 pulses: value[2],
                 ma420: value[3],
+                short_circuit_adc: value[4] > 0,
+                short_circuit_out: value[6] > 0,
             })
         }
     }

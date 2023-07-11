@@ -1,7 +1,5 @@
 // spi_25aa1024.rs - Transfers data to a Microchip 25AA1024 serial EEPROM using SPI.
 
-use std::error::Error;
-
 use rppal::spi::{Bus, Mode, SlaveSelect, Spi};
 
 /// Number of bits to be sent/received within a single transaction
@@ -52,7 +50,7 @@ impl Into<u8> for Channel {
     }
 }
 
-pub fn read_adc(channel: Channel) -> Result<u16, Box<dyn Error>> {
+pub fn read_adc(channel: Channel) -> Result<u16, ()> {
     // outputs the raw adc values of all channels
     /*if let Ok(mut mcp3208) = Mcp3208::new("/dev/spidev0.0") {
         Channel::VALUES.iter().for_each(|&channel| {
@@ -87,17 +85,16 @@ pub fn read_adc(channel: Channel) -> Result<u16, Box<dyn Error>> {
     // Configure the SPI peripheral. The 24AA1024 clocks in data on the first
     // rising edge of the clock signal (SPI mode 0). At 3.3 V, clock speeds of up
     // to 10 MHz are supported.
-    let spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 1_000_000, Mode::Mode0)?;
+    let spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 1_000_000, Mode::Mode0).map_err(|_| ())?;
 
     let mut buffer = [0u8; 4];
 
-    spi.transfer(&mut buffer, &create_write_buffer(channel.into()))?;
+    spi.transfer(&mut buffer, &create_write_buffer(channel.into()))
+        .map_err(|_| ())?;
 
     let result: u16 = (((buffer[0] as u16) & 0x1) << 11)
         | ((buffer[1] as u16) << 3)
         | (((buffer[2] as u16) & 0xE0) >> 5);
-
-    println!("Bytes read from {:?}: {:?} - {}", channel, buffer, result);
 
     Ok(result)
 }

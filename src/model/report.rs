@@ -1,11 +1,11 @@
 use std::fs;
 use std::ops::Sub;
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use chrono::{DateTime, Datelike, Local, Timelike};
 use serde::Serialize;
 
-use super::Configuration;
+use super::{Configuration, TestStep};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const NAME: &str = env!("CARGO_PKG_NAME");
@@ -35,13 +35,15 @@ impl fmt::Display for SerialNumber {
 #[derive(Clone)]
 pub struct Report {
     pub start: DateTime<Local>,
-    pub tests: HashMap<String, TestStepResult>,
+    pub tests: HashMap<TestStep, TestStepResult>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TestStepResult {
-    pub name: String,
+    pub step: TestStep,
     pub success: bool,
+    pub value: Option<f64>,
+    pub duration: Duration,
 }
 
 #[derive(Serialize)]
@@ -60,12 +62,6 @@ pub struct TestStation {
     pub versione: String,
     pub codice_dut: String,
     pub firmware: String,
-    pub hardware: String,
-    pub ordine_forn: u16,
-    pub datario: String,
-    pub pmont: String,
-    pub identificativo: String,
-    pub variante: String,
     pub matricola: String,
     pub data: String,
     pub ora: String,
@@ -79,14 +75,55 @@ pub struct TestStation {
 #[derive(Serialize)]
 pub struct SerializableTestStepResult {
     pub prova: String,
+    pub descrizione: String,
     pub esito: String,
+    pub durata: f32,
+    pub udm: String,
+    pub valore: Option<f64>,
+    pub minimo: Option<f64>,
+    pub massimo: Option<f64>,
 }
 
 impl Into<SerializableTestStepResult> for TestStepResult {
     fn into(self) -> SerializableTestStepResult {
+        let (name, description, udm) = self.step.metadata();
+        let (minimo, massimo) = if let Some((minimo, massimo)) = self.step.limits() {
+            (Some(minimo), Some(massimo))
+        } else {
+            (None, None)
+        };
+
         SerializableTestStepResult {
-            prova: self.name,
+            prova: name.into(),
+            descrizione: description.into(),
             esito: (if self.success { "Pass" } else { "Fail" }).into(),
+            durata: ((self.duration.as_secs_f32() * 10.0).round()) / 10.0,
+            udm: udm.into(),
+            valore: self.value,
+            minimo,
+            massimo,
+        }
+    }
+}
+
+impl SerializableTestStepResult {
+    pub fn unexecuted(step: TestStep) -> Self {
+        let (name, description, udm) = step.metadata();
+        let (minimo, massimo) = if let Some((minimo, massimo)) = step.limits() {
+            (Some(minimo), Some(massimo))
+        } else {
+            (None, None)
+        };
+
+        SerializableTestStepResult {
+            prova: name.into(),
+            descrizione: description.into(),
+            esito: "Unexecuted".into(),
+            durata: 0.0,
+            udm: udm.into(),
+            valore: None,
+            minimo,
+            massimo,
         }
     }
 }
@@ -109,13 +146,32 @@ impl Report {
     }
 
     pub fn add_test(self: &mut Self, test: TestStepResult) {
-        self.tests.insert(test.name.clone(), test);
+        self.tests.insert(test.step, test);
     }
 
     pub fn serializable(self: &Self, config: &Configuration) -> SerializableReport {
-        let mut prove: Vec<SerializableTestStepResult> =
-            Vec::from_iter(self.tests.clone().into_iter().map(|(_, v)| v.into()));
-        prove.sort_by_key(|v| v.prova.clone());
+        let mut prove: Vec<SerializableTestStepResult> = Vec::new();
+
+        const TESTS: [TestStep; 10] = [
+            TestStep::InvertPower,
+            TestStep::FlashingTest,
+            TestStep::Connecting,
+            TestStep::UiLeftButton,
+            TestStep::UiRightButton,
+            TestStep::UiLCD,
+            TestStep::UiRgb,
+            TestStep::Frequency,
+            TestStep::Analog,
+            TestStep::Output,
+        ];
+
+        for step in TESTS {
+            if let Some(result) = self.tests.get(&step) {
+                prove.push(result.clone().into());
+            } else {
+                prove.push(SerializableTestStepResult::unexecuted(step));
+            }
+        }
 
         let end = chrono::offset::Local::now();
 
@@ -127,18 +183,11 @@ impl Report {
             }
         }
 
-        let attrezzatura = fs::read_to_string("~/codice_attrezzatura.txt").unwrap_or("".into());
+        let attrezzatura = "BC033".into();
         let istanza = fs::read_to_string("~/istanza_attrezzatura.txt")
             .unwrap_or("".into())
             .parse()
             .unwrap_or(1);
-
-        let now = chrono::offset::Local::now();
-        let datario = format!(
-            "{:02}{:02}",
-            now.iso_week().week(),
-            now.iso_week().year() % 100
-        );
 
         SerializableReport {
             formato: 1,
@@ -150,12 +199,6 @@ impl Report {
                 versione: VERSION.into(),
                 codice_dut: config.codice_dut.clone(),
                 firmware: "TODO".into(),
-                hardware: "1".into(),
-                ordine_forn: str::parse(config.ordine_forn.as_str()).unwrap_or(0),
-                datario,
-                pmont: "".into(),
-                identificativo: "".into(),
-                variante: "".into(),
                 matricola: "TODO".into(),
                 data: format!(
                     "{}-{}-{}",
@@ -181,11 +224,12 @@ impl Report {
 }
 
 impl TestStepResult {
-    pub fn description(name: &str, result: bool) -> Self {
+    pub fn new(step: TestStep, success: bool, value: Option<f64>, duration: Duration) -> Self {
         Self {
-            name: name.into(),
-            success: result,
-            ..Self::default()
+            step,
+            success,
+            value,
+            duration,
         }
     }
 }

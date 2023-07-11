@@ -1,14 +1,19 @@
 use iced_native::{subscription, Subscription};
-use tokio_serial::SerialStream;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tokio_modbus::{client::Context, slave::Slave};
 use tokio::time::sleep;
+use tokio_modbus::{client::Context, slave::Slave};
+use tokio_serial::SerialStream;
 
-use crate::{controller::{
-    app::{ControllerEvent, ControllerMessage},
-    reles::{self, Rele}, digiblock, adc,
-}, model::TestStep};
+use crate::{
+    controller::{
+        adc,
+        app::{ControllerEvent, ControllerMessage},
+        digiblock,
+        reles::{self, Rele},
+    },
+    model::TestStep,
+};
 
 use super::pwm;
 
@@ -26,6 +31,50 @@ pub fn worker() -> Subscription<ControllerEvent> {
 
         sender
             .send(ControllerEvent::Log(format!("[{}]: {}", time, msg)))
+            .await
+            .ok();
+    }
+
+    async fn frequency_test(
+        ctx: &mut Context,
+        output: &mut iced_futures::futures::channel::mpsc::Sender<ControllerEvent>,
+        step: TestStep,
+        frequency: u16,
+    ) {
+        let (res, value) = match check_frequency(ctx, frequency).await {
+            Ok(found) => {
+                log(output, format!("Frequenza: {} - {}", frequency, found)).await;
+
+                (check_value_within(found, step.limits()), Some(found))
+            }
+            Err(()) => {
+                log(output, "Errore nell'impostazione della frequenza").await;
+                (false, None)
+            }
+        };
+
+        output
+            .send(ControllerEvent::TestResult(step, value, res))
+            .await
+            .ok();
+    }
+
+    async fn analog_test(
+        ctx: &mut Context,
+        output: &mut iced_futures::futures::channel::mpsc::Sender<ControllerEvent>,
+        step: TestStep,
+        ma420: i32,
+    ) {
+        let (res, value) = match check_analog(ctx, ma420).await {
+            Ok(found) => {
+                log(output, format!("Analogico: {} - {}", ma420, found)).await;
+                (check_value_within(found, step.limits()), Some(found))
+            }
+            Err(()) => (false, None),
+        };
+
+        output
+            .send(ControllerEvent::TestResult(step, value, res))
             .await
             .ok();
     }
@@ -80,6 +129,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                         output
                                             .send(ControllerEvent::TestResult(
                                                 TestStep::Connecting,
+                                                None,
                                                 true,
                                             ))
                                             .await
@@ -89,6 +139,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                         output
                                             .send(ControllerEvent::TestResult(
                                                 TestStep::Connecting,
+                                                None,
                                                 false,
                                             ))
                                             .await
@@ -98,7 +149,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                 // Not connected, fail
                                 ControllerMessage::Test(step) => {
                                     output
-                                        .send(ControllerEvent::TestResult(step, false))
+                                        .send(ControllerEvent::TestResult(step, None, false))
                                         .await
                                         .ok();
                                 }
@@ -110,7 +161,6 @@ pub fn worker() -> Subscription<ControllerEvent> {
                         if let Ok(Some(msg)) =
                             timeout(Duration::from_millis(100), receiver.recv()).await
                         {
-                            println!("Received msg {:?}", msg);
                             match msg {
                                 ControllerMessage::Disconnect => {
                                     ctx.disconnect().await.ok();
@@ -119,103 +169,65 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                 ControllerMessage::SetLight(light) => {
                                     digiblock::set_light(ctx, light).await.ok();
                                 }
-                                ControllerMessage::Test(TestStep::Frequency) => {
-                                    let frequency = 1000;
-                                    let res = match check_frequency(ctx, frequency).await {
-                                        Ok(found) => {
-                                            if i32::abs((frequency as i32) - (found as i32)) > 1 {
-                                                log(
-                                                    &mut output,
-                                                    format!(
-                                                        "Frequenza non corrispondente: {} - {}",
-                                                        frequency, found
-                                                    ),
-                                                )
-                                                .await;
-                                                false
-                                            } else {
-                                                true
-                                            }
-                                        }
-                                        Err(()) => {
-                                            log(
-                                                &mut output,
-                                                "Errore nell'impostazione della frequenza",
-                                            )
-                                            .await;
-                                            false
-                                        }
-                                    };
+                                ControllerMessage::Test(TestStep::AnalogShortCircuit) => {
+                                    let res =
+                                        check_analog_short_circuit(ctx).await.unwrap_or(false);
+
+                                    log(
+                                        &mut output,
+                                        if res {
+                                            "Corto circuito analogico rilevato"
+                                        } else {
+                                            "Corto circuito analogico non rilevato"
+                                        },
+                                    )
+                                    .await;
 
                                     output
-                                        .send(ControllerEvent::TestResult(TestStep::Frequency, res))
+                                        .send(ControllerEvent::TestResult(
+                                            TestStep::AnalogShortCircuit,
+                                            None,
+                                            res,
+                                        ))
                                         .await
                                         .ok();
                                 }
-                                ControllerMessage::Test(TestStep::Pulses) => {
-                                    let pulses = 1000;
-                                    if let Ok(found) = check_pulses(ctx, pulses).await {
-                                        log(
-                                            &mut output,
-                                            format!("Impulsi: {} - {}", pulses, found),
-                                        )
-                                        .await;
-
-                                        output
-                                            .send(ControllerEvent::TestResult(
-                                                TestStep::Pulses,
-                                                true,
-                                            ))
-                                            .await
-                                            .ok();
-                                    } else {
-                                        println!("Error pulses");
-                                        log(&mut output, format!("Errore nell'invio di impulsi"))
-                                            .await;
-                                        output
-                                            .send(ControllerEvent::TestResult(
-                                                TestStep::Pulses,
-                                                false,
-                                            ))
-                                            .await
-                                            .ok();
-                                    }
-                                }
                                 ControllerMessage::Test(TestStep::Analog) => {
-                                    let res = match check_analog(ctx).await {
-                                        Ok(None) => true,
-                                        Ok(Some((expected, found))) => {
-                                            log(
-                                                &mut output,
-                                                format!("Analogico: {} - {}", expected, found),
-                                            )
-                                            .await;
-                                            false
-                                        }
-                                        Err(()) => false,
-                                    };
+                                    analog_test(ctx, &mut output, TestStep::Analog, 10).await;
+                                }
+                                ControllerMessage::Test(TestStep::Frequency) => {
+                                    frequency_test(ctx, &mut output, TestStep::Frequency, 2000)
+                                        .await;
+                                }
+                                ControllerMessage::Test(TestStep::OutputShortCircuit) => {
+                                    let res =
+                                        check_output_short_circuit(ctx).await.unwrap_or(false);
 
                                     output
-                                        .send(ControllerEvent::TestResult(TestStep::Analog, res))
+                                        .send(ControllerEvent::TestResult(
+                                            TestStep::OutputShortCircuit,
+                                            None,
+                                            res,
+                                        ))
                                         .await
                                         .ok();
                                 }
                                 ControllerMessage::Test(TestStep::Output) => {
-                                    let res = match check_output(ctx).await {
-                                        Ok(true) => true,
-                                        Ok(false) => false,
-                                        Err(()) => false,
-                                    };
+                                    let res = check_output(ctx).await.unwrap_or(false);
 
                                     output
-                                        .send(ControllerEvent::TestResult(TestStep::Output, res))
+                                        .send(ControllerEvent::TestResult(
+                                            TestStep::Output,
+                                            None,
+                                            res,
+                                        ))
                                         .await
                                         .ok();
                                 }
                                 // Not implemented, fail
                                 ControllerMessage::Test(step) => {
                                     output
-                                        .send(ControllerEvent::TestResult(step, false))
+                                        .send(ControllerEvent::TestResult(step, None, false))
                                         .await
                                         .ok();
                                 }
@@ -224,7 +236,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                         } else {
                             let now = Instant::now();
 
-                            if now.duration_since(timestamp) > Duration::from_millis(500) {
+                            if now.duration_since(timestamp) > Duration::from_millis(250) {
                                 timestamp = now;
 
                                 if let Ok(Ok(rsp)) =
@@ -237,6 +249,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                     output
                                         .send(ControllerEvent::TestResult(
                                             TestStep::Connecting,
+                                            None,
                                             false,
                                         ))
                                         .await
@@ -261,20 +274,54 @@ fn _get_ports() -> Vec<String> {
 }
 
 pub async fn check_power_inversion() -> bool {
+    reles::update(reles::Rele::IncorrectPower, true).ok();
+    sleep(Duration::from_millis(500)).await;
+    let result = adc::read_adc(adc::Channel::PowerConsumption);
+    reles::update(reles::Rele::IncorrectPower, false).ok();
     sleep(Duration::from_millis(500)).await;
 
-    //TODO: read adc channel
-    true
+    if let Ok(power) = result {
+        println!("Power: {}", power);
+        //power == 0
+        true
+    } else {
+        false
+    }
 }
 
-async fn check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
+pub fn read_vbat() -> Result<f64, ()> {
+    let res = adc::read_adc(adc::Channel::VBat).map_err(|_| ())?;
+    Ok(res as f64)
+}
+
+async fn _check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
     reles::update(Rele::AnalogMode, false).map_err(|_| ())?;
     reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
 
     println!("Setting freq");
     digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
     println!("Reset pulses");
-    digiblock::reset_pulses(ctx).await.map_err(|_| ())?;
+
+    let mut counter = 0;
+    let result = loop {
+        counter += 1;
+
+        if counter > 5 {
+            break false;
+        }
+
+        if let Ok(_) =
+            tokio::time::timeout(Duration::from_millis(50), digiblock::reset_pulses(ctx)).await
+        {
+            break true;
+        } else {
+            println!("could not reset pulses, retrying...");
+        }
+    };
+
+    if !result {
+        return Err(());
+    }
 
     println!("Sending {} pulses", pulses);
     pwm::toggle_times(pulses).await.map_err(|_| ())?;
@@ -288,13 +335,36 @@ async fn check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
     Ok(rsp.pulses)
 }
 
-async fn check_analog(ctx: &mut Context) -> Result<Option<(u16, u16)>, ()> {
-    reles::update(Rele::DigitalMode, false).map_err(|_| ())?;
-    reles::update(Rele::AnalogMode, true).map_err(|_| ())?;
+async fn check_analog_short_circuit(ctx: &mut Context) -> Result<bool, ()> {
+    reles::update(Rele::DigitalMode, false)?;
+    reles::update(Rele::AnalogMode, true)?;
 
-    digiblock::set_analog_mode(ctx).await.map_err(|_| ())?;
+    digiblock::set_analog_mode(ctx).await?;
 
-    pwm::set_420ma(2).map_err(|_| ())?;
+    reles::update(Rele::ShortCircuitAnalog, true)?;
+
+    sleep(Duration::from_millis(200)).await;
+
+    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    println!("short circuit {}", rsp.short_circuit_adc);
+
+    reles::update(Rele::ShortCircuitAnalog, false)?;
+
+    Ok(rsp.short_circuit_adc)
+}
+
+async fn check_analog(ctx: &mut Context, ma420: i32) -> Result<f64, ()> {
+    reles::update(Rele::ShortCircuitAnalog, false)?;
+    reles::update(Rele::DigitalMode, false)?;
+    reles::update(Rele::AnalogMode, true)?;
+
+    digiblock::set_analog_mode(ctx).await?;
+
+    pwm::set_420ma(ma420).map_err(|_| ())?;
     sleep(Duration::from_millis(500)).await;
 
     let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
@@ -302,36 +372,97 @@ async fn check_analog(ctx: &mut Context) -> Result<Option<(u16, u16)>, ()> {
         .map_err(|_| ())?
         .map_err(|_| ())?;
 
-    println!("{:?}", rsp);
+    println!("Read 420ma {}", rsp.ma420);
 
-    Ok(None)
+    let resulting_420ma = (rsp.ma420 as f64) / 100.0;
+
+    Ok(resulting_420ma)
 }
 
-async fn check_output(ctx: &mut Context) -> Result<bool, ()> {
-    digiblock::set_output(ctx, false).await.map_err(|_| ())?;
-    sleep(Duration::from_millis(5000)).await;
-    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
-    println!("adc {}", value);
-
+async fn check_output_short_circuit(ctx: &mut Context) -> Result<bool, ()> {
+    // Toggling short circuit
+    reles::update(reles::Rele::ShortCircuitOutput, true).map_err(|_| ())?;
     digiblock::set_output(ctx, true).await.map_err(|_| ())?;
-    sleep(Duration::from_millis(100)).await;
-    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
-    println!("adc {}", value);
-
-    Ok(true)
-}
-
-async fn check_frequency(ctx: &mut Context, frequency: u16) -> Result<u16, ()> {
-    reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
-    digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
-    pwm::set_frequency(frequency).map_err(|_| ())?;
-
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(500)).await;
 
     let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
         .await
         .map_err(|_| ())?
         .map_err(|_| ())?;
 
-    Ok(rsp.frequency)
+    println!("short circuit {}", rsp.short_circuit_out);
+
+    reles::update(reles::Rele::ShortCircuitOutput, false).map_err(|_| ())?;
+
+    Ok(rsp.short_circuit_out)
+}
+
+async fn check_output(ctx: &mut Context) -> Result<bool, ()> {
+    reles::update(reles::Rele::ShortCircuitOutput, false).map_err(|_| ())?;
+    digiblock::set_output(ctx, false).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(500)).await;
+
+    toggle_output(ctx).await
+}
+
+async fn toggle_output(ctx: &mut Context) -> Result<bool, ()> {
+    digiblock::set_output(ctx, true).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(500)).await;
+    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
+    println!("adc {}", value);
+
+    if value < 1000 {
+        return Ok(false);
+    }
+
+    digiblock::set_output(ctx, false).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(100)).await;
+    let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
+    println!("adc {}", value);
+
+    if value > 1000 {
+        Ok(false)
+    } else {
+        Ok(true)
+    }
+}
+
+async fn check_frequency(ctx: &mut Context, frequency: u16) -> Result<f64, ()> {
+    reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
+    digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
+    pwm::set_frequency(frequency).await.map_err(|_| ())?;
+    sleep(Duration::from_millis(500)).await;
+
+    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    let found: f64 = if rsp.period_us == 0 {
+        0.0
+    } else {
+        1_000_000.0 / (rsp.period_us as f64)
+    };
+
+    println!("Frequency {} - {}", frequency, found);
+
+    pwm::toggle_times(0).await.map_err(|_| ())?;
+
+    Ok(found)
+}
+
+fn check_value_within<T>(found: T, limits: Option<(T, T)>) -> bool
+where
+    T: PartialOrd
+        + std::ops::Sub<Output = T>
+        + std::ops::Add<Output = T>
+        + Copy
+        + core::fmt::Display,
+{
+    if let Some((min, max)) = limits {
+        println!("{} {} {}", found, min, max);
+        found >= min && found <= max
+    } else {
+        false
+    }
 }

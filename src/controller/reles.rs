@@ -7,7 +7,8 @@ use rppal::system::DeviceInfo;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Rele {
-    ShortCircuit,
+    ShortCircuitOutput,
+    ShortCircuitAnalog,
     CorrectPower,
     IncorrectPower,
     UsbGround,
@@ -15,9 +16,10 @@ pub enum Rele {
     AnalogMode,
 }
 
-pub fn update(rele: Rele, value: bool) -> Result<(), Box<dyn Error>> {
+pub fn update(rele: Rele, value: bool) -> Result<(), ()> {
     let gpio = match rele {
-        Rele::ShortCircuit => 2,
+        Rele::ShortCircuitOutput => 14,
+        Rele::ShortCircuitAnalog => 2,
         Rele::AnalogMode => 3, // 420ma
         Rele::CorrectPower => 4,
         Rele::IncorrectPower => 17,
@@ -27,29 +29,49 @@ pub fn update(rele: Rele, value: bool) -> Result<(), Box<dyn Error>> {
 
     match rele {
         Rele::CorrectPower => {
-            let mut pin = Gpio::new()?.get(17)?.into_output();
+            let mut pin = Gpio::new()
+                .map_err(|_| ())?
+                .get(17)
+                .map_err(|_| ())?
+                .into_output();
             pin.set_reset_on_drop(false);
             pin.set_low();
         }
         Rele::IncorrectPower => {
-            let mut pin = Gpio::new()?.get(4)?.into_output();
+            let mut pin = Gpio::new()
+                .map_err(|_| ())?
+                .get(4)
+                .map_err(|_| ())?
+                .into_output();
             pin.set_reset_on_drop(false);
             pin.set_low();
         }
         Rele::DigitalMode => {
-            let mut pin = Gpio::new()?.get(3)?.into_output();
+            let mut pin = Gpio::new()
+                .map_err(|_| ())?
+                .get(3)
+                .map_err(|_| ())?
+                .into_output();
             pin.set_reset_on_drop(false);
             pin.set_low();
         }
         Rele::AnalogMode => {
-            let mut pin = Gpio::new()?.get(22)?.into_output();
+            let mut pin = Gpio::new()
+                .map_err(|_| ())?
+                .get(22)
+                .map_err(|_| ())?
+                .into_output();
             pin.set_reset_on_drop(false);
             pin.set_low();
         }
         _ => (),
     }
 
-    let mut pin = Gpio::new()?.get(gpio)?.into_output();
+    let mut pin = Gpio::new()
+        .map_err(|_| ())?
+        .get(gpio)
+        .map_err(|_| ())?
+        .into_output();
     pin.set_reset_on_drop(false);
 
     println!("Setting pin {:?} to {}", rele, value);
@@ -65,7 +87,8 @@ pub fn update(rele: Rele, value: bool) -> Result<(), Box<dyn Error>> {
 
 pub fn all_off() {
     update(Rele::AnalogMode, false).ok();
-    update(Rele::ShortCircuit, false).ok();
+    update(Rele::ShortCircuitOutput, false).ok();
+    update(Rele::ShortCircuitAnalog, false).ok();
     update(Rele::CorrectPower, false).ok();
     update(Rele::IncorrectPower, false).ok();
     update(Rele::UsbGround, false).ok();
