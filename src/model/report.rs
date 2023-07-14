@@ -36,6 +36,40 @@ impl fmt::Display for SerialNumber {
 pub struct Report {
     pub start: DateTime<Local>,
     pub tests: HashMap<TestStep, TestStepResult>,
+    pub barcode: Barcode,
+}
+
+#[derive(Clone, Serialize, Default)]
+pub struct Barcode {
+    pub rif_ordine: String,
+    pub rif_fornitore: String,
+    pub lotto_produzione: String,
+    pub rev_hw: String,
+    pub matricola: String,
+    pub variante: String,
+}
+
+impl Barcode {
+    pub fn change_field_num(self: &mut Self, index: usize, field: String) {
+        match index {
+            0 => self.rif_ordine = field,
+            1 => self.rif_fornitore = field,
+            2 => self.lotto_produzione = field,
+            3 => self.rev_hw = field,
+            4 => self.matricola = field,
+            5 => self.variante = field,
+            _ => (),
+        }
+    }
+
+    pub fn valid(self: &Self) -> bool {
+        !(self.rif_ordine.is_empty()
+            || self.rif_fornitore.is_empty()
+            || self.lotto_produzione.is_empty()
+            || self.rev_hw.is_empty()
+            || self.matricola.is_empty()
+            || self.variante.is_empty())
+    }
 }
 
 #[derive(Clone)]
@@ -62,11 +96,15 @@ pub struct TestStation {
     pub versione: String,
     pub codice_dut: String,
     pub firmware: String,
+    pub hardware: String,
+    pub ordine_forn: u64,
+    pub fornitore: u64,
     pub matricola: String,
     pub data: String,
     pub ora: String,
     pub durata: f64,
     pub operatore: String,
+    pub variante: String,
     pub esito: String,
     pub codice_di_errore: String,
     pub note: String,
@@ -133,6 +171,7 @@ impl Default for Report {
         Self {
             start: chrono::offset::Local::now(),
             tests: HashMap::new(),
+            barcode: Barcode::default(),
         }
     }
 }
@@ -149,10 +188,14 @@ impl Report {
         self.tests.insert(test.step, test);
     }
 
-    pub fn serializable(self: &Self, config: &Configuration) -> SerializableReport {
+    pub fn serializable(
+        self: &Self,
+        config: &Configuration,
+        version: String,
+    ) -> SerializableReport {
         let mut prove: Vec<SerializableTestStepResult> = Vec::new();
 
-        const TESTS: [TestStep; 10] = [
+        const TESTS: [TestStep; 16] = [
             TestStep::InvertPower,
             TestStep::FlashingTest,
             TestStep::Connecting,
@@ -160,9 +203,15 @@ impl Report {
             TestStep::UiRightButton,
             TestStep::UiLCD,
             TestStep::UiRgb,
-            TestStep::Frequency,
+            TestStep::Check3v3,
+            TestStep::Check5v,
+            TestStep::Check12v,
+            TestStep::AnalogShortCircuit,
             TestStep::Analog,
+            TestStep::Frequency,
+            TestStep::OutputShortCircuit,
             TestStep::Output,
+            TestStep::FlashingProduction,
         ];
 
         for step in TESTS {
@@ -197,9 +246,13 @@ impl Report {
                 stazione: 1,
                 applicazione: NAME.into(),
                 versione: VERSION.into(),
-                codice_dut: config.codice_dut.clone(),
-                firmware: "TODO".into(),
-                matricola: "TODO".into(),
+                codice_dut: "digiblock2".into(),
+                firmware: version,
+                hardware: self.barcode.rev_hw.clone(),
+                ordine_forn: self.barcode.rif_ordine.parse().unwrap_or(0),
+                fornitore: self.barcode.rif_fornitore.parse().unwrap_or(0),
+                matricola: self.barcode.matricola.clone(),
+                variante: self.barcode.variante.clone(),
                 data: format!(
                     "{}-{}-{}",
                     self.start.year(),
@@ -213,7 +266,7 @@ impl Report {
                     self.start.second()
                 ),
                 durata: end.sub(self.start).num_seconds() as f64,
-                operatore: config.operatore.clone(),
+                operatore: format!("MB_OP{:02}", config.operatore),
                 esito: (if self.successful() { "Pass" } else { "Fail" }).into(),
                 codice_di_errore,
                 note: "".into(),

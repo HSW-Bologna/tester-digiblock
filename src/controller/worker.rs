@@ -42,15 +42,8 @@ pub fn worker() -> Subscription<ControllerEvent> {
         frequency: u16,
     ) {
         let (res, value) = match check_frequency(ctx, frequency).await {
-            Ok(found) => {
-                log(output, format!("Frequenza: {} - {}", frequency, found)).await;
-
-                (check_value_within(found, step.limits()), Some(found))
-            }
-            Err(()) => {
-                log(output, "Errore nell'impostazione della frequenza").await;
-                (false, None)
-            }
+            Ok(found) => (check_value_within(found, step.limits()), Some(found)),
+            Err(()) => (false, None),
         };
 
         output
@@ -66,10 +59,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
         ma420: i32,
     ) {
         let (res, value) = match check_analog(ctx, ma420).await {
-            Ok(found) => {
-                log(output, format!("Analogico: {} - {}", ma420, found)).await;
-                (check_value_within(found, step.limits()), Some(found))
-            }
+            Ok(found) => (check_value_within(found, step.limits()), Some(found)),
             Err(()) => (false, None),
         };
 
@@ -105,11 +95,7 @@ pub fn worker() -> Subscription<ControllerEvent> {
                         {
                             match msg {
                                 ControllerMessage::Connect(port) => {
-                                    println!("Connect to {}", port);
-
-                                    reles::update(Rele::IncorrectPower, false).ok();
-                                    reles::update(Rele::CorrectPower, true).ok();
-                                    sleep(Duration::from_millis(500)).await;
+                                    reset().await;
 
                                     let builder = tokio_serial::new(port, 115200);
                                     if let Ok(port) = SerialStream::open(&builder) {
@@ -124,27 +110,18 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                         }
                                     }
 
-                                    if let State::Connected(_) = state {
-                                        log(&mut output, "Connessione effettuata").await;
-                                        output
-                                            .send(ControllerEvent::TestResult(
-                                                TestStep::Connecting,
-                                                None,
-                                                true,
-                                            ))
-                                            .await
-                                            .ok();
-                                    } else {
-                                        log(&mut output, "Connessione fallita").await;
-                                        output
-                                            .send(ControllerEvent::TestResult(
-                                                TestStep::Connecting,
-                                                None,
-                                                false,
-                                            ))
-                                            .await
-                                            .ok();
-                                    }
+                                    output
+                                        .send(ControllerEvent::TestResult(
+                                            TestStep::Connecting,
+                                            None,
+                                            if let State::Connected(_) = state {
+                                                true
+                                            } else {
+                                                false
+                                            },
+                                        ))
+                                        .await
+                                        .ok();
                                 }
                                 // Not connected, fail
                                 ControllerMessage::Test(step) => {
@@ -172,16 +149,6 @@ pub fn worker() -> Subscription<ControllerEvent> {
                                 ControllerMessage::Test(TestStep::AnalogShortCircuit) => {
                                     let res =
                                         check_analog_short_circuit(ctx).await.unwrap_or(false);
-
-                                    log(
-                                        &mut output,
-                                        if res {
-                                            "Corto circuito analogico rilevato"
-                                        } else {
-                                            "Corto circuito analogico non rilevato"
-                                        },
-                                    )
-                                    .await;
 
                                     output
                                         .send(ControllerEvent::TestResult(
@@ -239,10 +206,10 @@ pub fn worker() -> Subscription<ControllerEvent> {
                             if now.duration_since(timestamp) > Duration::from_millis(250) {
                                 timestamp = now;
 
-                                if let Ok(Ok(rsp)) =
+                                let result =
                                     timeout(Duration::from_millis(50), digiblock::get_state(ctx))
-                                        .await
-                                {
+                                        .await;
+                                if let Ok(Ok(rsp)) = result {
                                     output.send(ControllerEvent::Update(rsp)).await.ok();
                                 } else {
                                     log(&mut output, "Errore di comunicazione").await;
@@ -273,19 +240,22 @@ fn _get_ports() -> Vec<String> {
         .collect()
 }
 
-pub async fn check_power_inversion() -> bool {
+pub async fn check_power_inversion() -> Result<f64, ()> {
+    reles::update(reles::Rele::UsbGround, true).ok();
+    sleep(Duration::from_millis(50)).await;
     reles::update(reles::Rele::IncorrectPower, true).ok();
     sleep(Duration::from_millis(500)).await;
     let result = adc::read_adc(adc::Channel::PowerConsumption);
+
+    reles::update(reles::Rele::UsbGround, false).ok();
+    sleep(Duration::from_millis(50)).await;
     reles::update(reles::Rele::IncorrectPower, false).ok();
     sleep(Duration::from_millis(500)).await;
 
     if let Ok(power) = result {
-        println!("Power: {}", power);
-        //power == 0
-        true
+        Ok(power as f64)
     } else {
-        false
+        Err(())
     }
 }
 
@@ -298,9 +268,7 @@ async fn _check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
     reles::update(Rele::AnalogMode, false).map_err(|_| ())?;
     reles::update(Rele::DigitalMode, true).map_err(|_| ())?;
 
-    println!("Setting freq");
     digiblock::set_frequency_mode(ctx).await.map_err(|_| ())?;
-    println!("Reset pulses");
 
     let mut counter = 0;
     let result = loop {
@@ -311,11 +279,10 @@ async fn _check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
         }
 
         if let Ok(_) =
-            tokio::time::timeout(Duration::from_millis(50), digiblock::reset_pulses(ctx)).await
+            tokio::time::timeout(Duration::from_millis(50), digiblock::_reset_pulses(ctx)).await
         {
             break true;
         } else {
-            println!("could not reset pulses, retrying...");
         }
     };
 
@@ -323,10 +290,8 @@ async fn _check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
         return Err(());
     }
 
-    println!("Sending {} pulses", pulses);
     pwm::toggle_times(pulses).await.map_err(|_| ())?;
 
-    println!("Pulses sent");
     let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
         .await
         .map_err(|_| ())?
@@ -338,23 +303,23 @@ async fn _check_pulses(ctx: &mut Context, pulses: u16) -> Result<u16, ()> {
 async fn check_analog_short_circuit(ctx: &mut Context) -> Result<bool, ()> {
     reles::update(Rele::DigitalMode, false)?;
     reles::update(Rele::AnalogMode, true)?;
-
+    reles::update(Rele::ShortCircuitAnalog, false)?;
     digiblock::set_analog_mode(ctx).await?;
-
-    reles::update(Rele::ShortCircuitAnalog, true)?;
-
     sleep(Duration::from_millis(200)).await;
 
-    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
-        .await
-        .map_err(|_| ())?
-        .map_err(|_| ())?;
+    let short_circuit = digiblock::get_short_circuit_adc(ctx).await?;
+    if short_circuit {
+        return Ok(false);
+    }
 
-    println!("short circuit {}", rsp.short_circuit_adc);
+    reles::update(Rele::ShortCircuitAnalog, true)?;
+    sleep(Duration::from_millis(200)).await;
+
+    let short_circuit = digiblock::get_short_circuit_adc(ctx).await?;
 
     reles::update(Rele::ShortCircuitAnalog, false)?;
 
-    Ok(rsp.short_circuit_adc)
+    Ok(short_circuit)
 }
 
 async fn check_analog(ctx: &mut Context, ma420: i32) -> Result<f64, ()> {
@@ -372,8 +337,6 @@ async fn check_analog(ctx: &mut Context, ma420: i32) -> Result<f64, ()> {
         .map_err(|_| ())?
         .map_err(|_| ())?;
 
-    println!("Read 420ma {}", rsp.ma420);
-
     let resulting_420ma = (rsp.ma420 as f64) / 100.0;
 
     Ok(resulting_420ma)
@@ -381,20 +344,23 @@ async fn check_analog(ctx: &mut Context, ma420: i32) -> Result<f64, ()> {
 
 async fn check_output_short_circuit(ctx: &mut Context) -> Result<bool, ()> {
     // Toggling short circuit
-    reles::update(reles::Rele::ShortCircuitOutput, true).map_err(|_| ())?;
+    reles::update(reles::Rele::ShortCircuitOutput, false).map_err(|_| ())?;
     digiblock::set_output(ctx, true).await.map_err(|_| ())?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(200)).await;
 
-    let rsp = tokio::time::timeout(Duration::from_millis(50), digiblock::get_state(ctx))
-        .await
-        .map_err(|_| ())?
-        .map_err(|_| ())?;
+    let short_circuit = digiblock::get_short_circuit_out(ctx).await?;
+    if short_circuit {
+        return Ok(false);
+    }
 
-    println!("short circuit {}", rsp.short_circuit_out);
+    reles::update(reles::Rele::ShortCircuitOutput, true).map_err(|_| ())?;
+    sleep(Duration::from_millis(200)).await;
+
+    let short_circuit = digiblock::get_short_circuit_out(ctx).await?;
 
     reles::update(reles::Rele::ShortCircuitOutput, false).map_err(|_| ())?;
 
-    Ok(rsp.short_circuit_out)
+    Ok(short_circuit)
 }
 
 async fn check_output(ctx: &mut Context) -> Result<bool, ()> {
@@ -409,7 +375,6 @@ async fn toggle_output(ctx: &mut Context) -> Result<bool, ()> {
     digiblock::set_output(ctx, true).await.map_err(|_| ())?;
     sleep(Duration::from_millis(500)).await;
     let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
-    println!("adc {}", value);
 
     if value < 1000 {
         return Ok(false);
@@ -418,7 +383,6 @@ async fn toggle_output(ctx: &mut Context) -> Result<bool, ()> {
     digiblock::set_output(ctx, false).await.map_err(|_| ())?;
     sleep(Duration::from_millis(100)).await;
     let value = adc::read_adc(adc::Channel::Out1).map_err(|_| ())?;
-    println!("adc {}", value);
 
     if value > 1000 {
         Ok(false)
@@ -444,7 +408,6 @@ async fn check_frequency(ctx: &mut Context, frequency: u16) -> Result<f64, ()> {
         1_000_000.0 / (rsp.period_us as f64)
     };
 
-    println!("Frequency {} - {}", frequency, found);
 
     pwm::toggle_times(0).await.map_err(|_| ())?;
 
@@ -460,9 +423,16 @@ where
         + core::fmt::Display,
 {
     if let Some((min, max)) = limits {
-        println!("{} {} {}", found, min, max);
         found >= min && found <= max
     } else {
         false
     }
+}
+
+pub async fn reset() {
+    reles::update(Rele::IncorrectPower, false).ok();
+    reles::update(Rele::CorrectPower, false).ok();
+    sleep(Duration::from_millis(500)).await;
+    reles::update(Rele::CorrectPower, true).ok();
+    sleep(Duration::from_millis(1000)).await;
 }

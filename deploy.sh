@@ -25,7 +25,7 @@ cd ${BINARY_FOLDER} && tar -czf ${TAR_PATH} ${BINARY_NAME} && cd ${CWD}
 #scp ${TAR_PATH} ${TARGET_HOST}:${TAR_PATH}
 #ssh ${TARGET_HOST} tar -xzf ${TAR_PATH}
 sshpass -p ${PASSWORD} scp -o StrictHostKeyChecking=no ${TAR_PATH} ${TARGET_HOST}:${TAR_PATH}
-sshpass -p ${PASSWORD} ssh -o StrictHostKeyChecking=no ${TARGET_HOST} tar -xzf ${TAR_PATH}
+sshpass -p ${PASSWORD} ssh -o StrictHostKeyChecking=no ${TARGET_HOST} tar -xzf ${TAR_PATH} -C ${TARGET_PATH}
 
 #rsync ${BINARY_PATH} ${TARGET_HOST}:${TARGET_PATH}
 #ssh -t ${TARGET_HOST} ${TARGET_PATH}

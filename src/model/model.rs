@@ -52,7 +52,6 @@ pub enum TestStep {
 #[derive(Clone, Default)]
 pub enum TestState {
     #[default]
-    Unconfigured,
     Ready,
     Testing(TestStep, StepState),
     Done,
@@ -67,26 +66,64 @@ pub struct Model {
     pub report: Report,
     pub config: Configuration,
     pub vbat: Option<Vec<f64>>,
+    pub firmware_version: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Configuration {
-    pub codice_dut: String,
-    pub operatore: String,
+    pub operatore: u8,
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self { operatore: 1 }
+    }
 }
 
 impl TestStep {
     pub fn metadata(self: &Self) -> (&'static str, &'static str, &'static str) {
         use TestStep::*;
         match self {
-            InvertPower => ("A001", "Inversione di alimentazione", ""),
-            FlashingTest => ("A002", "Caricamento firmware", ""),
+            InvertPower => ("A001", "Inversione della tensione", ""),
+            FlashingTest => ("A002", "Caricamento firmware di collaudo", ""),
             Connecting => ("A003", "Connessione USB", ""),
-            UiRgb => ("A004", "Interfaccia utente", ""),
-            Frequency => ("A005", "Lettura di una frequenza (2KHz)", "Hz"),
-            Analog => ("A009", "Lettura di 420ma (4ma)", ".1mA"),
-            Output => ("A0012", "Gestione uscita", ""),
-            _ => ("", "", ""),
+            UiLeftButton => ("M001", "Verifica del funzionamento del tasto sinistro", ""),
+            UiRightButton => ("M002", "Verifica del funzionamento del tasto destro", ""),
+            UiLCD => ("M003", "Verifica del funzionamento dei segmenti", ""),
+            UiRgb => (
+                "M004",
+                "Verifica del funzionamento della retroilluminazione",
+                "",
+            ),
+            Check3v3 => ("A004", "Verifica del corretto livello della linea 3v3", "V"),
+            Check5v => ("A005", "Verifica del corretto livello della linea 5v", "V"),
+            Check12v => ("A006", "Verifica del corretto livello della linea 12v", "V"),
+            AnalogShortCircuit => (
+                "A007",
+                "Verifica della rilevazione di un cortocircuito sulla linea analogica",
+                "",
+            ),
+            Analog => (
+                "A008",
+                "Lettura di 420ma e verifica del valore (10ma)",
+                "mA",
+            ),
+            Frequency => (
+                "A009",
+                "Lettura di una frequenza e verifica del valore (1KHz)",
+                "Hz",
+            ),
+            OutputShortCircuit => (
+                "A010",
+                "Verifica della rilevazione di un cortocircuito sull'uscita digitale",
+                "",
+            ),
+            Output => (
+                "A0011",
+                "Verifica del funzionamento dell'uscita digitale",
+                "",
+            ),
+            FlashingProduction => ("A0012", "Caricamento del firmware finale", ""),
         }
     }
 
@@ -95,10 +132,10 @@ impl TestStep {
         match self {
             InvertPower => Some((0.0, 0.0)),
             Frequency => Some((1995.0, 2005.0)),
-            Analog => Some((9.8, 10.2)),
-            Check3v3 => Some((3.3, 3.5)),
+            Analog => Some((9.75, 10.25)),
+            Check3v3 => Some((3.25, 3.55)),
             Check5v => Some((4.9, 5.1)),
-            Check12v => Some((12.75, 12.85)),
+            Check12v => Some((11.9, 12.8)),
             _ => None,
         }
     }
@@ -124,25 +161,6 @@ impl Model {
     }
 
     pub fn digiblock_update(&mut self, state: DigiblockState) {
-        match self.state {
-            TestState::Testing(TestStep::Connecting, _) => {
-                self.state = TestState::Testing(TestStep::UiLeftButton, StepState::Waiting);
-                self.light = RgbLight::default();
-            }
-            TestState::Testing(TestStep::UiLeftButton, _) => {
-                if self.digiblock_state.left_button && self.digiblock_state.right_button {
-                    self.state = TestState::Testing(TestStep::UiLCD, StepState::Waiting);
-                } else if self.digiblock_state.left_button {
-                    self.state = TestState::Testing(TestStep::UiRightButton, StepState::Waiting);
-                }
-            }
-            TestState::Testing(TestStep::UiRightButton, _) => {
-                if self.digiblock_state.right_button {
-                    self.state = TestState::Testing(TestStep::UiLCD, StepState::Waiting);
-                }
-            }
-            _ => (),
-        }
         self.digiblock_state = state;
     }
 
@@ -160,7 +178,7 @@ impl Model {
         if let Some(value) = value {
             if let Some(ref mut values) = self.vbat {
                 if values.len() > 10 {
-                    values.pop();
+                    values.remove(0);
                 }
                 values.push(value);
             } else {
@@ -177,11 +195,23 @@ impl Model {
             for v in values {
                 total += v;
             }
-            let raw_vbat = total / values.len() as f64;
-            let vbat = ((raw_vbat / 4095.0) * 3.35) * 6.0;
-            Some(((vbat + 0.3) * 100.0).round() / 100.0)
+            let vbat_adc = total / values.len() as f64;
+
+            const BASE_VALUE_ADC: f64 = 2790.0;
+            const BASE_VALUE_VOLTS: f64 = 13.6;
+
+            let vbat = (vbat_adc * BASE_VALUE_VOLTS) / BASE_VALUE_ADC;
+            //let vbat = ((vbat_adc / 4095.0) * 3.35) * 6.0;
+            Some((vbat * 100.0).round() / 100.0)
         } else {
             None
         }
+    }
+
+    pub fn log(self: &mut Self, msg: impl Into<String> + std::fmt::Display) {
+        use chrono::prelude::*;
+        let now = Utc::now();
+        let time = now.format("%H:%M:%S:%3f");
+        self.logs.push(format!("[{}]: {}", time, msg));
     }
 }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tokio_modbus::client::Context;
 use tokio_modbus::prelude::*;
 
@@ -10,7 +12,7 @@ const INPUT_REGISTER_BTN_TEST: u16 = 0;
 const NUM_INPUT_REGISTERS: u16 = 7;
 
 const HOLDING_REGISTER_MODE: u16 = 0;
-const HOLDING_REGISTER_RESET_PULSES: u16 = 1;
+const _HOLDING_REGISTER_RESET_PULSES: u16 = 1;
 const HOLDING_REGISTER_OUTPUT: u16 = 2;
 const HOLDING_REGISTER_BACKLIGHT: u16 = 3;
 //const HOLDING_REGISTER_RGB: u16 = 4;
@@ -74,15 +76,32 @@ pub async fn set_analog_mode(ctx: &mut Context) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
-pub async fn reset_pulses(ctx: &mut Context) -> Result<(), ()> {
-    ctx.write_multiple_registers(HOLDING_REGISTER_RESET_PULSES, &[1])
+pub async fn _reset_pulses(ctx: &mut Context) -> Result<(), ()> {
+    ctx.write_multiple_registers(_HOLDING_REGISTER_RESET_PULSES, &[1])
         .await
         .map_err(|_| ())
 }
 
 pub async fn set_output(ctx: &mut Context, value: bool) -> Result<(), ()> {
-    println!("Setting output to {}", value);
     ctx.write_multiple_registers(HOLDING_REGISTER_OUTPUT, &[if value { 1 } else { 0 }])
         .await
         .map_err(|_| ())
+}
+
+pub async fn get_short_circuit_adc(ctx: &mut Context) -> Result<bool, ()> {
+    let rsp = tokio::time::timeout(Duration::from_millis(50), get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    Ok(rsp.short_circuit_adc)
+}
+
+pub async fn get_short_circuit_out(ctx: &mut Context) -> Result<bool, ()> {
+    let rsp = tokio::time::timeout(Duration::from_millis(50), get_state(ctx))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+
+    Ok(rsp.short_circuit_out)
 }

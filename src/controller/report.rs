@@ -1,8 +1,9 @@
-use crate::model::{Model, SerializableReport};
+use crate::model::Model;
 use chrono::{Datelike, Timelike, Utc};
-use serde_yaml;
 use std::fs::{create_dir_all, File};
 use std::io::prelude::*;
+
+use super::flashing::get_production_firmware_version;
 
 const REPORTS_PATH: &str = "./reports";
 
@@ -31,7 +32,7 @@ pub fn save_report(model: &Model) {
 
     let mut file = File::create(filename).unwrap();
 
-    let report = model.report.serializable(&model.config);
+    let report = model.report.serializable(&model.config, get_production_firmware_version());
     //let content = serde_yaml::to_string::<SerializableReport>(&report).unwrap();
 
     let mut content: String = format!(
@@ -44,7 +45,11 @@ collaudo:
   versione: '{}'
   codice_dut: '{}'
   firmware: '{}'
-  matricola: 'TODO'
+  hardware: '{}'
+  ordine_forn: {}
+  fornitore: {}
+  variante: '{}'
+  matricola: '{}'
   data: '{}'
   ora: '{}'
   durata: {}
@@ -62,6 +67,11 @@ prove:
         report.collaudo.versione,
         report.collaudo.codice_dut,
         report.collaudo.firmware,
+        report.collaudo.hardware,
+        report.collaudo.ordine_forn,
+        report.collaudo.fornitore,
+        report.collaudo.variante,
+        report.collaudo.matricola,
         report.collaudo.data,
         report.collaudo.ora,
         report.collaudo.durata,

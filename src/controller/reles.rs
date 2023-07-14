@@ -27,44 +27,46 @@ pub fn update(rele: Rele, value: bool) -> Result<(), ()> {
         Rele::DigitalMode => 22, // Frequency
     };
 
-    match rele {
-        Rele::CorrectPower => {
-            let mut pin = Gpio::new()
-                .map_err(|_| ())?
-                .get(17)
-                .map_err(|_| ())?
-                .into_output();
-            pin.set_reset_on_drop(false);
-            pin.set_low();
+    if value {
+        match rele {
+            Rele::CorrectPower => {
+                let mut pin = Gpio::new()
+                    .map_err(|_| ())?
+                    .get(17)
+                    .map_err(|_| ())?
+                    .into_output();
+                pin.set_reset_on_drop(false);
+                pin.set_low();
+            }
+            Rele::IncorrectPower => {
+                let mut pin = Gpio::new()
+                    .map_err(|_| ())?
+                    .get(4)
+                    .map_err(|_| ())?
+                    .into_output();
+                pin.set_reset_on_drop(false);
+                pin.set_low();
+            }
+            Rele::DigitalMode => {
+                let mut pin = Gpio::new()
+                    .map_err(|_| ())?
+                    .get(3)
+                    .map_err(|_| ())?
+                    .into_output();
+                pin.set_reset_on_drop(false);
+                pin.set_low();
+            }
+            Rele::AnalogMode => {
+                let mut pin = Gpio::new()
+                    .map_err(|_| ())?
+                    .get(22)
+                    .map_err(|_| ())?
+                    .into_output();
+                pin.set_reset_on_drop(false);
+                pin.set_low();
+            }
+            _ => (),
         }
-        Rele::IncorrectPower => {
-            let mut pin = Gpio::new()
-                .map_err(|_| ())?
-                .get(4)
-                .map_err(|_| ())?
-                .into_output();
-            pin.set_reset_on_drop(false);
-            pin.set_low();
-        }
-        Rele::DigitalMode => {
-            let mut pin = Gpio::new()
-                .map_err(|_| ())?
-                .get(3)
-                .map_err(|_| ())?
-                .into_output();
-            pin.set_reset_on_drop(false);
-            pin.set_low();
-        }
-        Rele::AnalogMode => {
-            let mut pin = Gpio::new()
-                .map_err(|_| ())?
-                .get(22)
-                .map_err(|_| ())?
-                .into_output();
-            pin.set_reset_on_drop(false);
-            pin.set_low();
-        }
-        _ => (),
     }
 
     let mut pin = Gpio::new()
