@@ -96,10 +96,10 @@ pub struct TestStation {
     pub versione: String,
     pub codice_dut: String,
     pub firmware: String,
-    pub hardware: String,
+    pub pmont: String,
     pub ordine_forn: u64,
     pub fornitore: u64,
-    pub matricola: String,
+    pub identificativo: String,
     pub data: String,
     pub ora: String,
     pub durata: f64,
@@ -226,7 +226,7 @@ impl Report {
 
         let mut codice_di_errore = String::new();
         for p in &prove {
-            if p.esito != "Pass" {
+            if p.esito == "Fail" {
                 codice_di_errore = p.prova.clone();
                 break;
             }
@@ -239,7 +239,7 @@ impl Report {
             .unwrap_or(1);
 
         SerializableReport {
-            formato: 1,
+            formato: 2,
             collaudo: TestStation {
                 attrezzatura,
                 istanza,
@@ -248,19 +248,19 @@ impl Report {
                 versione: VERSION.into(),
                 codice_dut: "digiblock2".into(),
                 firmware: version,
-                hardware: self.barcode.rev_hw.clone(),
+                pmont: self.barcode.rev_hw.clone(),
                 ordine_forn: self.barcode.rif_ordine.parse().unwrap_or(0),
                 fornitore: self.barcode.rif_fornitore.parse().unwrap_or(0),
-                matricola: self.barcode.matricola.clone(),
+                identificativo: self.barcode.matricola.clone(),
                 variante: self.barcode.variante.clone(),
                 data: format!(
-                    "{}-{}-{}",
+                    "{:02}-{:02}-{:02}",
                     self.start.year(),
                     self.start.month(),
                     self.start.day()
                 ),
                 ora: format!(
-                    "{}-{}-{}",
+                    "{:02}:{:02}:{:02}",
                     self.start.hour(),
                     self.start.minute(),
                     self.start.second()

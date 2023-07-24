@@ -32,7 +32,9 @@ pub fn save_report(model: &Model) {
 
     let mut file = File::create(filename).unwrap();
 
-    let report = model.report.serializable(&model.config, get_production_firmware_version());
+    let report = model
+        .report
+        .serializable(&model.config, get_production_firmware_version());
     //let content = serde_yaml::to_string::<SerializableReport>(&report).unwrap();
 
     let mut content: String = format!(
@@ -45,11 +47,14 @@ collaudo:
   versione: '{}'
   codice_dut: '{}'
   firmware: '{}'
-  hardware: '{}'
+  hardware: ''
   ordine_forn: {}
   fornitore: {}
+  datario: ''
+  pmont: '{}'
+  identificativo: '{}'
   variante: '{}'
-  matricola: '{}'
+  matricola: ''
   data: '{}'
   ora: '{}'
   durata: {}
@@ -62,16 +67,16 @@ prove:
         report.formato,
         report.collaudo.attrezzatura,
         report.collaudo.istanza,
-        report.collaudo.attrezzatura,
+        report.collaudo.stazione,
         report.collaudo.applicazione,
         report.collaudo.versione,
         report.collaudo.codice_dut,
         report.collaudo.firmware,
-        report.collaudo.hardware,
         report.collaudo.ordine_forn,
         report.collaudo.fornitore,
+        report.collaudo.pmont,
+        report.collaudo.identificativo,
         report.collaudo.variante,
-        report.collaudo.matricola,
         report.collaudo.data,
         report.collaudo.ora,
         report.collaudo.durata,
@@ -93,7 +98,7 @@ prove:
   massimo: {}
 "#,
             p.prova,
-            p.descrizione,
+            p.descrizione.replace("'", ""),
             p.esito,
             p.durata,
             p.udm,

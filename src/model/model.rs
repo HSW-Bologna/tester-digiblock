@@ -105,22 +105,22 @@ impl TestStep {
             ),
             Analog => (
                 "A008",
-                "Lettura di 420ma e verifica del valore (10ma)",
+                "Lettura di 420mA e verifica del valore (10mA)",
                 "mA",
             ),
             Frequency => (
                 "A009",
-                "Lettura di una frequenza e verifica del valore (1KHz)",
+                "Lettura di una frequenza e verifica del valore",
                 "Hz",
             ),
             OutputShortCircuit => (
                 "A010",
-                "Verifica della rilevazione di un cortocircuito sull'uscita digitale",
+                "Verifica della rilevazione di un cortocircuito sulla uscita digitale",
                 "",
             ),
             Output => (
                 "A0011",
-                "Verifica del funzionamento dell'uscita digitale",
+                "Verifica del funzionamento della uscita digitale",
                 "",
             ),
             FlashingProduction => ("A0012", "Caricamento del firmware finale", ""),
