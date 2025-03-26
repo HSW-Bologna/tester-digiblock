@@ -50,7 +50,7 @@ collaudo:
   hardware: ''
   ordine_forn: {}
   fornitore: {}
-  datario: ''
+  datario: '{}'
   pmont: '{}'
   identificativo: '{}'
   variante: '{}'
@@ -74,6 +74,7 @@ prove:
         report.collaudo.firmware,
         report.collaudo.ordine_forn,
         report.collaudo.fornitore,
+        report.collaudo.lotto_produzione,
         report.collaudo.pmont,
         report.collaudo.identificativo,
         report.collaudo.variante,
